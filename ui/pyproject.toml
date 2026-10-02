@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "swarm-ui"
+version = "0.1.0"
+description = "A fast, local-only dashboard to monitor and command the swarm."
+requires-python = ">=3.11"
+dependencies = []          # standard library only
+
+[project.scripts]
+swarm-ui = "swarm_ui.server:main"
+
+[tool.setuptools.packages.find]
+include = ["swarm_ui*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]

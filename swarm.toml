@@ -1,0 +1,28 @@
+# swarm configuration. Every key is optional; the values shown are the defaults.
+# Search order: --config FILE, then <project>/swarm.toml, then this file.
+
+[run]
+budget_usd = 3.0          # hard cap for one run. On a Claude plan this is an estimate of usage, not a charge
+per_call_fraction = 0.4   # a single agent call may use at most this share of the budget
+max_fix_rounds = 3        # fix -> verify -> review loops before the run reports "needs attention"
+research = true           # run the online researcher before planning
+role_timeout_s = 1800     # wall-clock limit for one agent call (seconds)
+gate_timeout_s = 600      # wall-clock limit for one test/lint command (seconds)
+commit = false            # commit the result to a new branch at the end (never pushes)
+allow_api_billing = false # true = also accept logins that bill per token (API key, Bedrock, ...); keep false to stay on your plan
+plan_stop_at = 0.9        # stop when this share of a Claude plan usage window is used (never continue into paid overage)
+
+[models]
+default = "sonnet"        # for roles that pin no model; "" = the account's own default (may be the largest model)
+# force = "haiku"         # run EVERY role on one model - the lightest way to try things out
+# architect = "opus"      # any role name overrides that role's model (Opus uses your plan faster)
+# reviewer = "opus"
+
+[turns]
+# developer = 60          # maximum agent turns per call, per role
+
+[mcp]
+enabled = ["grep", "deepwiki", "context7"]   # online sources for the researcher; [] turns them off
+
+[claude]
+# cli_path = "C:/Users/you/.local/bin/claude.exe"   # auto-detected when omitted

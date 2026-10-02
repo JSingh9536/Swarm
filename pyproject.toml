@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "swarm-team"
+version = "0.1.0"
+description = "An AI software engineering team: specialist Claude agents driven by a deterministic, test-gated pipeline."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "claude-agent-sdk>=0.2.127",
+    "pydantic>=2.6",
+    "rich>=13",
+    "psutil>=5.9",  # BSD-3-Clause; CPU/RAM readout for `swarm hardware` (hardware.py also works without it)
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "ruff>=0.5",
+]
+
+[project.scripts]
+swarm = "swarm.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-q"
+markers = [
+    "integration: talks to the real Claude Code engine (no model calls); enable with SWARM_INTEGRATION=1",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
