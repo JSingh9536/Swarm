@@ -759,6 +759,7 @@ class Pipeline:
         date = time.strftime("%Y-%m-%d")
         done: list[tuple[str, Path]] = []
         asked: list[str] = []
+        self._memos_cut_short: set[str] = set()
         status, cancelled = "failed", False
         try:
             for role in COMPANY_SEQUENCE:
@@ -788,12 +789,15 @@ class Pipeline:
                         raise outcome
                     if outcome:
                         done.append((role, company_dir / f"{role}-{date}.md"))
-            # a cycle is only a success when every role that was asked delivered a memo
+            # a cycle is only a success when every role that was asked delivered a memo, and delivered all of it
             wrote = {role for role, _ in done}
             missing = [r for r in asked if r not in wrote]
             if missing and done:
                 self._note(f"cycle incomplete: no memo from {', '.join(missing)}")
-            status = "success" if done and not missing else "needs_attention"
+            cut_short = [r for r in asked if r in self._memos_cut_short]
+            if cut_short:
+                self._note(f"cycle incomplete: memo cut short for {', '.join(cut_short)}")
+            status = "success" if done and not missing and not cut_short else "needs_attention"
         except FatalError as exc:
             self._note(f"fatal: {exc}")
         except BudgetExhausted as exc:
@@ -830,6 +834,7 @@ class Pipeline:
                 self._note(f"{role}: could not save memo ({exc})")
                 return False
             if not result.ok:
+                self._memos_cut_short.add(role)
                 self._note(f"{role}: memo saved but may be incomplete ({result.error})")
             return True
         self._note(f"{role}: produced no memo ({result.error or 'empty response'})")

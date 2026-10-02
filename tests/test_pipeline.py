@@ -852,6 +852,8 @@ def test_company_partial_memo_is_kept(tmp_path: Path) -> None:
     memo_file = next((s.project_dir / "company").glob("ceo-*.md")).read_text(encoding="utf-8")
     assert "partial thoughts" in memo_file and "may be incomplete" in memo_file
     assert any("ceo: memo saved but may be incomplete" in n for n in s.notes)
+    assert s.status == "needs_attention", "a cycle with a cut-short memo must not report success"
+    assert any("cycle incomplete: memo cut short for ceo" in n for n in s.notes)
 
 
 def test_company_empty_memo_is_skipped(tmp_path: Path) -> None:
