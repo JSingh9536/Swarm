@@ -219,6 +219,26 @@ def test_post_validation(server):
     assert call(server, "/api/jobs/abc/stop", method="POST", body=b"{}")[0] == 404
 
 
+def test_a_reply_that_ignores_the_body_leaves_the_connection_usable(server):
+    import http.client
+
+    conn = http.client.HTTPConnection("127.0.0.1", server.port, timeout=5)
+    auth = {"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"}
+    try:
+        # each of these is answered without the route reading the body; the next request on the same
+        # connection must still be parsed as a request, not as the leftover body
+        for headers, expected in (({"Content-Type": "application/json"}, 401), (auth, 404)):
+            conn.request("POST", "/api/jobs/abc/stop", body=b'{"pad":"' + b"x" * 4000 + b'"}', headers=headers)
+            r = conn.getresponse()
+            r.read()
+            assert r.status == expected
+        conn.request("GET", "/api/overview", headers=auth)
+        r = conn.getresponse()
+        assert r.status == 200 and json.loads(r.read())["projects"] == ["proj"]
+    finally:
+        conn.close()
+
+
 def test_job_lifecycle_over_http(root, tmp_path):
     jm = JobManager(root, tmp_path / "d2", spawn=lambda a, c, fh: (fh.write(b"line\n"), FakeProc())[1])
     app = App(root, tmp_path / "d2", TOKEN, jobs=jm)
