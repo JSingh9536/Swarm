@@ -160,6 +160,35 @@ def test_plan_limit_with_unknown_reset_pauses_sixty_minutes() -> None:
     assert "unknown" in state.reason
 
 
+def test_plan_limit_pauses_until_the_real_reset_however_far() -> None:
+    now = 1_700_000_000.0
+    for ahead in (5 * 60.0, 4.5 * 3600, 6 * 24 * 3600.0):  # minutes, a five-hour window, a weekly window
+        state = State()
+        record(_item(tier=2), state, "claude", Outcome(status="plan_limit", resets_at=now + ahead), now=now)
+        assert state.claude_paused_until == now + ahead
+        assert "unknown" not in state.reason
+
+
+@pytest.mark.parametrize(
+    "resets_at",
+    [
+        999.0,  # already past: would un-pause at once and re-run the item into the same limit
+        1000.0,  # this very instant
+        1000.0 + 30 * 24 * 3600,  # further away than any plan window
+        float("nan"),
+        "soon",
+        True,
+    ],
+)
+def test_plan_limit_with_an_unbelievable_reset_pauses_sixty_minutes(resets_at: object) -> None:
+    item = _item(tier=2)
+    state = State()
+    record(item, state, "claude", Outcome(status="plan_limit", resets_at=resets_at), now=1000.0)  # type: ignore[arg-type]
+    assert state.claude_paused_until == pytest.approx(1000.0 + 60 * 60)
+    assert "unknown" in state.reason
+    assert not claude_available(state, now=1000.0)
+
+
 def test_two_needs_attention_on_claude_blocks_a_tier2_item() -> None:
     item = _item(tier=2)
     state = State()
@@ -228,6 +257,16 @@ def test_tier1_still_runs_locally_while_a_tier2_item_waits_for_claude(tmp_path: 
     assert result["action"] == "ran" and result["item"] == 2 and result["backend"] == "local"
 
 
+def test_step_puts_the_item_back_to_todo_after_a_plan_limit(tmp_path: Path) -> None:
+    queue_path, state_path = tmp_path / "queue.json", tmp_path / "autopilot-state.json"
+    workqueue.save(queue_path, [_item(id=1, tier=2)])
+    runner = _runner_queue([Outcome(status="plan_limit", resets_at=5000.0)])
+    result = step(queue_path, state_path, runner, now=1000.0, decision=IDLE)
+    assert result["status"] == "plan_limit"
+    assert workqueue.load(queue_path)[0]["state"] == "todo"  # not stranded as "doing"
+    assert State.load(state_path).claude_paused_until == 5000.0
+
+
 def test_tier2_runs_on_claude_again_once_the_reset_passes(tmp_path: Path) -> None:
     queue_path, state_path = tmp_path / "queue.json", tmp_path / "autopilot-state.json"
     workqueue.save(queue_path, [_item(id=1, tier=2)])
@@ -257,6 +296,54 @@ def test_loop_sleeps_until_the_reset_in_chunks_then_resumes(tmp_path: Path) -> N
     assert len(results) == 1 and results[0]["status"] == "success"
     assert slept and sum(slept) >= 600.0
     assert all(s <= 300.0 for s in slept)  # never sleeps more than 5-minute chunks
+
+
+def test_loop_waits_for_the_real_reset_after_a_plan_limit_then_reruns_the_item(tmp_path: Path) -> None:
+    queue_path, state_path = tmp_path / "queue.json", tmp_path / "autopilot-state.json"
+    workqueue.save(queue_path, [_item(id=1, tier=2)])
+    now = [1_700_000_000.0]
+    reset = now[0] + 3 * 3600  # three hours away: well past the 60-minute default
+    ran_at: list[float] = []
+    outcomes = iter([Outcome(status="plan_limit", resets_at=reset), Outcome(status="success")])
+
+    def runner(item: dict, backend: str) -> Outcome:
+        ran_at.append(now[0])
+        return next(outcomes)
+
+    def sleep(s: float) -> None:
+        now[0] += s
+
+    results = loop(
+        queue_path, state_path, runner,
+        sleep=sleep, now_fn=lambda: now[0], decision_fn=lambda: IDLE, log_path=tmp_path / "log.md",
+    )  # fmt: skip
+    assert [r["status"] for r in results] == ["plan_limit", "success"]
+    assert len(ran_at) == 2 and ran_at[1] >= reset  # not retried before the plan reset
+    item = workqueue.load(queue_path)[0]
+    assert item["state"] == "done" and item["attempts_claude"] == 0
+
+
+def test_real_runner_passes_the_plan_reset_time_on(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import swarm.pipeline
+    import swarm.priority
+    from swarm.autopilot import real_runner
+    from swarm.report import RunSummary
+
+    class FakePipeline:
+        def __init__(self, *args: object) -> None:
+            pass
+
+        async def run(self, task: str, project: Path) -> RunSummary:
+            return RunSummary(
+                status="plan_limit", task=task, project_dir=project, run_dir=project / "run",
+                notes=["the five_hour plan limit is reached"], plan_resets_at=1_700_000_000.0,
+            )  # fmt: skip
+
+    monkeypatch.setattr(swarm.pipeline, "Pipeline", FakePipeline)
+    monkeypatch.setattr(swarm.priority, "lower_priority", lambda **kw: None)
+    outcome = real_runner(_item(tier=2, project=str(tmp_path)), "claude")
+    assert outcome.status == "plan_limit" and outcome.resets_at == 1_700_000_000.0
+    assert "five_hour" in outcome.note
 
 
 def test_loop_stops_at_max_items(tmp_path: Path) -> None:

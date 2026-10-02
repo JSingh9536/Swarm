@@ -17,6 +17,7 @@ from swarm.backend import (
     describe_tool,
     limit_note,
     plan_limit_reason,
+    plan_reset_time,
 )
 from swarm.claude_cli import AuthInfo, billing_kind, looks_like_limit_error
 from swarm.roles import Role
@@ -128,6 +129,27 @@ class TestPlanLimitReason:
         real = RateLimitInfo(status="allowed_warning", rate_limit_type="seven_day", utilization=0.97)
         assert plan_limit_reason(real, "sonnet", 0.9)
         assert plan_limit_reason(RateLimitInfo(status="allowed"), "sonnet", 0.9) is None
+
+
+@pytest.mark.parametrize(
+    ("kw", "expected"),
+    [
+        ({"resets_at": 1_700_000_000}, 1_700_000_000.0),
+        ({"resets_at": 1_700_000_000.5, "rate_limit_type": "seven_day"}, 1_700_000_000.5),
+        ({"resets_at": None}, None),
+        ({"resets_at": 0}, None),
+        ({"resets_at": -5}, None),
+        ({"resets_at": "soon"}, None),
+        ({"resets_at": True}, None),
+        ({"resets_at": 1_700_000_000, "rate_limit_type": "overage"}, None),  # not a plan window
+    ],
+)
+def test_plan_reset_time(kw: dict[str, Any], expected: float | None) -> None:
+    assert plan_reset_time(info(**kw)) == expected
+
+
+def test_plan_reset_time_missing_attribute() -> None:
+    assert plan_reset_time(SimpleNamespace()) is None
 
 
 def test_limit_note() -> None:
@@ -373,6 +395,13 @@ def test_run_plan_limit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None
     assert not r.ok and r.subtype == "plan_limit"
     assert r.error.startswith("stopped to protect your Claude plan")
     assert "plan-limit" in transcript.read_text(encoding="utf-8")
+    assert r.resets_at is None  # the limit did not say when it resets
+
+
+def test_run_plan_limit_carries_the_reset_time(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    patch_consume(monkeypatch, PlanLimit("the five_hour plan limit is reached", resets_at=1_700_000_000.0))
+    r = run(make_request(tmp_path))
+    assert r.subtype == "plan_limit" and r.resets_at == 1_700_000_000.0
 
 
 def test_run_generic_exception(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -485,6 +514,25 @@ def test_consume_rate_limit_stops(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     r = consume(tmp_path, events)
     assert not r.ok and r.subtype == "plan_limit"
     assert not any(k == "tool" for k, _ in events), "nothing may run after the limit event"
+
+
+@needs_rate_events
+@pytest.mark.parametrize(
+    ("kw", "expected"),
+    [
+        ({"status": "rejected", "rate_limit_type": "five_hour", "resets_at": 1_700_000_000}, 1_700_000_000.0),
+        ({"status": "allowed_warning", "rate_limit_type": "seven_day", "utilization": 0.95, "resets_at": 1_700_600_000},
+         1_700_600_000.0),
+        ({"status": "rejected", "rate_limit_type": "five_hour"}, None),
+        ({"status": "allowed", "rate_limit_type": "overage", "resets_at": 1_700_000_000}, None),
+    ],
+)  # fmt: skip
+def test_consume_rate_limit_reports_when_the_window_resets(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kw: dict[str, Any], expected: float | None
+) -> None:
+    fake_stream(monkeypatch, [rate_event(**kw), sdk_result()])
+    r = consume(tmp_path)
+    assert r.subtype == "plan_limit" and r.resets_at == expected
 
 
 @needs_rate_events

@@ -65,6 +65,7 @@ class AgentResult:
     warnings: list[str] = field(default_factory=list)
     denied: int = 0  # tool calls the guard blocked
     model: str | None = None  # the actual model that produced the result
+    resets_at: float | None = None  # plan_limit only: when the window that stopped the run resets (None = unknown)
 
 
 class Backend(Protocol):
@@ -73,6 +74,23 @@ class Backend(Protocol):
 
 class PlanLimit(Exception):
     """The Claude plan's usage limit is (nearly) reached, or usage would spill into paid overage."""
+
+    def __init__(self, reason: str, resets_at: float | None = None) -> None:
+        super().__init__(reason)
+        self.resets_at = resets_at
+
+
+def plan_reset_time(info: Any) -> float | None:
+    """When the plan window in `info` resets, as a Unix timestamp (None = not known).
+
+    Paid overage reports no time: its own reset does not say when plan usage is available again.
+    """
+    if getattr(info, "rate_limit_type", None) == "overage":
+        return None
+    value = getattr(info, "resets_at", None)
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+        return None
+    return float(value)
 
 
 def _reset_text(timestamp: int | None) -> str:
@@ -216,7 +234,7 @@ class ClaudeBackend:
             self._log(request, "plan-limit", str(exc))
             return AgentResult(
                 False, seconds=time.monotonic() - started, subtype="plan_limit", denied=denied,
-                error=f"stopped to protect your Claude plan: {exc}",
+                error=f"stopped to protect your Claude plan: {exc}", resets_at=exc.resets_at,
             )  # fmt: skip
         except Exception as exc:  # noqa: BLE001 - classify everything; the pipeline decides what to do
             return self._from_exception(exc, "\n".join(stderr_tail), time.monotonic() - started, denied)
@@ -257,7 +275,7 @@ class ClaudeBackend:
                     self._log(req, "rate-limit", getattr(info, "raw", None) or str(info))
                     reason = plan_limit_reason(info, req.model, self.plan_stop_at)
                     if reason:
-                        raise PlanLimit(reason)
+                        raise PlanLimit(reason, plan_reset_time(info))
                     if note := limit_note(info):
                         emit("limit", note)
                 elif isinstance(msg, AssistantMessage):
