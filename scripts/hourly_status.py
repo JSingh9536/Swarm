@@ -10,6 +10,7 @@ It never raises: a failure is written to docs/status-error.log and the next hour
 
 from __future__ import annotations
 
+import contextlib
 import json
 import sys
 import time
@@ -60,8 +61,6 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except Exception:  # noqa: BLE001 - a scheduled job must not pop up an error dialog
-        try:
+        with contextlib.suppress(OSError):
             (DOCS / "status-error.log").write_text(traceback.format_exc(), encoding="utf-8")
-        except OSError:
-            pass
         sys.exit(1)
