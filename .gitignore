@@ -1,0 +1,24 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+
+# Swarm working files
+workspace/
+.swarm/
+
+# Local Claude Code overrides / secrets
+.claude/settings.local.json
+.env
+.env.*
+
+# Operational state of one installation (queue, status snapshots, handoff notes): not part of the toolkit
+queue.json
+autopilot-state.json
+docs/*
+!docs/operating-model.md

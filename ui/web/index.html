@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark light">
+<title>Swarm Control</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand"><span class="logo" aria-hidden="true"></span><b>swarm</b><span class="muted">control</span></div>
+  <div class="stats" id="stats"></div>
+  <button class="btn ghost" id="theme" type="button" aria-label="Switch colour theme">Theme: auto</button>
+  <div class="conn" id="conn" role="status">connecting…</div>
+</header>
+
+<div class="page">
+  <section class="card hero" id="hero" aria-label="What the swarm is doing now" aria-live="polite">
+    <div class="hero-head">
+      <span class="state s-idle" id="stateWord">Connecting…</span>
+      <span class="muted" id="stateSub"></span>
+    </div>
+    <div id="heroBody"></div>
+  </section>
+
+  <section class="tiles" id="tiles" aria-label="At a glance"></section>
+
+  <section class="card net" aria-label="Team activity">
+    <div class="between">
+      <h2>Team activity</h2>
+      <div class="row-tight"><span class="muted small" id="watching"></span>
+        <button class="btn" id="follow" type="button" hidden>Follow live</button>
+        <button class="btn" id="replay" type="button" hidden>Replay</button></div>
+    </div>
+    <div class="now" id="now" role="status">Idle</div>
+    <div class="netwrap">
+      <canvas id="net" role="img" aria-label="Network of agents. The glowing node is the agent currently working."></canvas>
+      <ol class="feed" id="feed"></ol>
+    </div>
+  </section>
+
+  <main class="grid">
+    <section class="col">
+      <div class="card">
+        <div class="between"><h2>Work queue</h2><span class="muted small" id="queueNote"></span></div>
+        <div id="queue" class="list"></div>
+      </div>
+
+      <div class="card">
+        <div class="between"><h2>Autopilot log</h2><span class="muted small" id="logNote"></span></div>
+        <pre class="log short" id="autolog" tabindex="0"></pre>
+      </div>
+
+      <details class="card fold" id="cmdFold">
+        <summary><h2>Command the team</h2></summary>
+        <form id="cmd" autocomplete="off">
+          <div class="seg" id="kinds" role="tablist"></div>
+          <label class="field"><span id="textLabel">Task</span>
+            <textarea id="text" rows="5" maxlength="4000" placeholder="Describe what to build…"></textarea>
+          </label>
+          <label class="field" id="projectRow"><span>Project</span><select id="project"></select></label>
+          <div class="row">
+            <label class="field"><span>Budget (USD)</span><input id="budget" type="number" min="0.1" max="10" step="0.1" value="3"></label>
+            <label class="field"><span>Model</span>
+              <select id="model"><option value="">default per role</option><option>haiku</option><option>sonnet</option><option>opus</option></select>
+            </label>
+            <label class="field"><span>Fix rounds</span><input id="rounds" type="number" min="0" max="5" step="1" placeholder="auto"></label>
+          </div>
+          <div class="checks" id="checks"></div>
+          <div class="actions">
+            <button class="btn primary" id="launch" type="submit">Launch</button>
+            <span class="muted small" id="msg" role="alert"></span>
+          </div>
+          <p class="muted small">Runs locally via <code>python -m swarm</code>, guarded and test-gated. Budget is capped at $10.</p>
+        </form>
+      </details>
+
+      <div class="card" id="jobCard" hidden>
+        <div class="between">
+          <h2 id="jobTitle">Live job</h2>
+          <div class="row-tight"><span class="pill" id="jobStatus"></span><button class="btn danger" id="stop" type="button">Stop</button></div>
+        </div>
+        <pre class="log" id="log" tabindex="0" aria-live="off"></pre>
+      </div>
+    </section>
+
+    <section class="col">
+      <div class="card">
+        <div class="between"><h2>PC health</h2><span class="muted small" id="healthNote"></span></div>
+        <div id="health"></div>
+      </div>
+
+      <div class="card">
+        <div class="between"><h2>Usage</h2><span class="muted small" id="usageNote"></span></div>
+        <div id="usage"></div>
+      </div>
+
+      <div class="card">
+        <div class="between">
+          <h2>Runs</h2>
+          <div class="row-tight"><input id="filter" type="search" placeholder="Filter…" aria-label="Filter runs"></div>
+        </div>
+        <div id="runs" class="runs"></div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<aside class="drawer" id="drawer" hidden aria-label="Run details">
+  <div class="drawer-head">
+    <div><div class="muted small" id="dProject"></div><h2 id="dTitle"></h2></div>
+    <button class="btn" id="dClose" type="button" aria-label="Close">Close</button>
+  </div>
+  <div class="drawer-body" id="dBody"></div>
+</aside>
+<div class="scrim" id="scrim" hidden></div>
+<script src="/viz.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>

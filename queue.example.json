@@ -1,0 +1,18 @@
+[
+    {
+        "id": 1,
+        "state": "todo",
+        "tier": 1,
+        "project": "C:/path/to/your/project",
+        "task": "Add docstrings to every public function in slugify.py",
+        "check": "python -m pytest -q"
+    },
+    {
+        "id": 2,
+        "state": "todo",
+        "tier": 2,
+        "project": "C:/path/to/your/project",
+        "task": "Add a --separator option to the command line and cover it with tests",
+        "check": "python -m pytest -q; ruff check ."
+    }
+]
