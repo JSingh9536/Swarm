@@ -861,6 +861,29 @@ def test_company_empty_memo_is_skipped(tmp_path: Path) -> None:
     s = asyncio.run(pipe.company(git_repo(tmp_path / "proj"), "x", run_id="r1"))
     assert not list((s.project_dir / "company").glob("marketing-lead-*.md"))
     assert any("marketing-lead: produced no memo" in n for n in s.notes)
+    assert s.status == "needs_attention", "a cycle with a missing memo must not report success"
+    assert any("cycle incomplete: no memo from marketing-lead" in n for n in s.notes)
+
+
+def test_company_missing_ceo_memo_is_not_success(tmp_path: Path) -> None:
+    script = {**full_company_script(), "ceo": [fail("empty response")]}
+    pipe, _ = company_pipeline(script)
+    s = asyncio.run(pipe.company(git_repo(tmp_path / "proj"), "x", run_id="r1"))
+    assert s.status == "needs_attention"
+    assert any("no memo from ceo" in n for n in s.notes)
+
+
+def test_company_runs_a_projects_own_function_roles(tmp_path: Path) -> None:
+    """A role-set may name its own function leads; every one runs, after the CEO and the product lead."""
+    names = ["ceo", "product-lead", "security-lead", "risk-lead", "ux-lead"]
+    pipe, backend = company_pipeline({n: [memo(n)] for n in names}, company_roles(names))
+    s = asyncio.run(pipe.company(git_repo(tmp_path / "proj"), "x", run_id="r1"))
+    called = [r.role.name for r in backend.requests]
+    assert called[:2] == ["ceo", "product-lead"]
+    assert sorted(called[2:]) == ["risk-lead", "security-lead", "ux-lead"]
+    assert s.status == "success", s.notes
+    board = (s.project_dir / "company" / "board.md").read_text(encoding="utf-8")
+    assert "risk-lead-" in board and "ux-lead-" in board
 
 
 def test_company_plan_limit_stops(tmp_path: Path) -> None:

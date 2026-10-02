@@ -758,19 +758,25 @@ class Pipeline:
         company_dir = self.ws.project_dir / "company"
         date = time.strftime("%Y-%m-%d")
         done: list[tuple[str, Path]] = []
+        asked: list[str] = []
         status, cancelled = "failed", False
         try:
             for role in COMPANY_SEQUENCE:
                 if role not in self.roles:
                     continue
                 self._phase(role)
+                asked.append(role)
                 path = company_dir / f"{role}-{date}.md"
                 if await self._company_memo(role, focus, [p for _, p in done], path):
                     done.append((role, path))
+            # every other role in the set is a function lead: the known names first, then a project's own
+            # (a role-set with "risk-lead" or "ux-lead" must not be silently skipped)
             funcs = [r for r in COMPANY_FUNCTIONS if r in self.roles]
+            funcs += sorted(r for r in self.roles if r not in COMPANY_SEQUENCE and r not in COMPANY_FUNCTIONS)
             if funcs:
                 self._phase("functions")
                 prior = [p for _, p in done]
+                asked += funcs
                 # each function memo is small and read-only; give each a normal slice rather than 1/N (which
                 # starved the most thorough role). The overall budget gate on every call still bounds the cycle.
                 outcomes = await asyncio.gather(
@@ -782,7 +788,12 @@ class Pipeline:
                         raise outcome
                     if outcome:
                         done.append((role, company_dir / f"{role}-{date}.md"))
-            status = "success" if done else "needs_attention"
+            # a cycle is only a success when every role that was asked delivered a memo
+            wrote = {role for role, _ in done}
+            missing = [r for r in asked if r not in wrote]
+            if missing and done:
+                self._note(f"cycle incomplete: no memo from {', '.join(missing)}")
+            status = "success" if done and not missing else "needs_attention"
         except FatalError as exc:
             self._note(f"fatal: {exc}")
         except BudgetExhausted as exc:
