@@ -205,6 +205,7 @@ class Pipeline:
         self.all_findings: list[tuple[int, str, Finding]] = []  # (round, role, finding), every severity
         self.gate_count = 0
         self.phase_name = ""
+        self.plan_resets_at: float | None = None  # set when a call stops on the plan limit and says when it resets
         self.started = time.monotonic()
 
     # ------------------------------------------------------------------ small helpers
@@ -312,6 +313,7 @@ class Pipeline:
         for warning in result.warnings:
             self._note(warning)
         if result.subtype == "plan_limit":
+            self.plan_resets_at = result.resets_at
             raise PlanLimitReached(result.error)
         if result.fatal:
             raise FatalError(result.error)
@@ -924,6 +926,7 @@ class Pipeline:
             calls=list(self.calls), open_findings=open_findings, gate=gate,
             changed_files=self.ws.changed_files(), seconds=time.monotonic() - self.started,
             notes=list(self.notes), research=self.research_text,
+            plan_resets_at=self.plan_resets_at if status == "plan_limit" else None,
         )  # fmt: skip
         if status == "success" and self.cfg.commit and self.plan is not None:
             summary.commit_note = self.ws.commit(

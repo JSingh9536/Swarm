@@ -53,6 +53,7 @@ class Handler(BaseHTTPRequestHandler):
     server_version = "swarm-ui"
     sys_version = ""
     protocol_version = "HTTP/1.1"
+    _body_taken = False  # per request: True once a POST body has been read (or given up on)
 
     @property
     def app(self) -> App:
@@ -63,7 +64,30 @@ class Handler(BaseHTTPRequestHandler):
 
     # ---- plumbing
 
+    def _length(self) -> int:
+        try:
+            return int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            return -1
+
+    def _drain(self) -> None:
+        """Take a request body nobody read off the socket (bounded) before replying.
+
+        Left there, it is parsed as the next request on a kept-alive connection, and closing the socket over
+        it resets the connection so the client loses the reply. Anything larger is not worth reading: answer
+        and drop the connection.
+        """
+        if self.command != "POST" or self._body_taken:
+            return
+        self._body_taken = True
+        length = self._length()
+        if 0 < length <= MAX_DRAIN:
+            self.rfile.read(length)
+        elif length != 0 or self.headers.get("Transfer-Encoding"):
+            self.close_connection = True
+
     def _send(self, code: int, body: bytes, ctype: str) -> None:
+        self._drain()
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
@@ -94,19 +118,11 @@ class Handler(BaseHTTPRequestHandler):
 
     def _body(self) -> dict[str, Any] | None:
         ctype = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
-        try:
-            length = int(self.headers.get("Content-Length") or 0)
-        except ValueError:
-            length = -1
+        length = self._length()
         if ctype != "application/json" or not 0 <= length <= MAX_BODY:
-            # Read a rejected body off the socket (bounded) so the client gets the reply instead of a reset;
-            # anything larger is not worth reading: answer and drop the connection.
-            if 0 < length <= MAX_DRAIN:
-                self.rfile.read(length)
-            else:
-                self.close_connection = True
-            self._error(400, "expected a small application/json body")
+            self._error(400, "expected a small application/json body")  # the reply drains the rejected body
             return None
+        self._body_taken = True
         try:
             data = json.loads(self.rfile.read(length) or b"{}")
         except ValueError:
@@ -180,6 +196,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         path = urlsplit(self.path).path
+        self._body_taken = False
         if not self._gate(api=True):
             return
         app = self.app

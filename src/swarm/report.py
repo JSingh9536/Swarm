@@ -50,6 +50,7 @@ class RunSummary:
     notes: list[str] = field(default_factory=list)
     commit_note: str = ""
     research: str | None = None
+    plan_resets_at: float | None = None  # status plan_limit only: Unix time the plan window resets (None = unknown)
 
     @property
     def cost_usd(self) -> float:
@@ -131,6 +132,7 @@ def summary_dict(s: RunSummary) -> dict[str, Any]:
         "changed_files": s.changed_files,
         "notes": s.notes,
         "commit": s.commit_note,
+        "plan_resets_at": s.plan_resets_at,
         "open_findings": [f.model_dump() for f in s.open_findings],
         "gate": [
             {"command": r.command, "ok": r.ok, "skipped": r.skipped, "exit_code": r.exit_code}

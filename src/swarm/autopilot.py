@@ -25,6 +25,7 @@ from swarm import workqueue
 from swarm.load import Decision, route
 
 PLAN_LIMIT_DEFAULT_PAUSE_S = 60 * 60.0  # unknown reset time: pause an hour and say so
+PLAN_LIMIT_MAX_PAUSE_S = 8 * 24 * 3600.0  # the longest plan window is seven days: a later reset is not believed
 SLEEP_CHUNK_S = 5 * 60.0  # loop() never sleeps longer than this before re-checking
 DEFAULT_LOG = Path("docs/autonomous-build-log.md")
 STATE_FIELDS = ("claude_paused_until", "reason", "last_item", "updated_at", "current")
@@ -129,11 +130,22 @@ def run_item(item: dict, backend: str, runner: Runner) -> Outcome:
     )
 
 
+def _believable_reset(resets_at: Any, now: float) -> bool:
+    """True for a reset time that is in the future and no further away than the longest plan window.
+
+    A time already past would un-pause Claude at once and send the same item straight back into the limit.
+    """
+    if isinstance(resets_at, bool) or not isinstance(resets_at, (int, float)):
+        return False
+    return now < resets_at <= now + PLAN_LIMIT_MAX_PAUSE_S
+
+
 def record(item: dict, state: State, backend: str, outcome: Outcome, now: float) -> dict:
     """Apply an `Outcome` to `item` (in place) and to `state` (in place). Returns the fields that changed.
 
     success -> done. plan_limit -> stays todo, is not counted as an attempt, pauses Claude until the reset
-    (60 minutes, stated as such, if the reset time is unknown). needs_attention -> counts an attempt on
+    (60 minutes, stated as such, if the reset time is unknown, already past or further off than any plan
+    window). needs_attention -> counts an attempt on
     `backend`; a tier 1 item that has now failed twice locally goes back to `todo` so the next `choose()`
     call escalates it to Claude via `route`; any item blocked after 2 failed attempts on Claude is marked
     `blocked` for a human or the lead.
@@ -144,15 +156,18 @@ def record(item: dict, state: State, backend: str, outcome: Outcome, now: float)
     if outcome.status == "success":
         updates = {"state": "done", "note": outcome.note or f"done on {backend}", "report": outcome.report}
     elif outcome.status == "plan_limit":
-        if outcome.resets_at:
-            resets_at, reason = outcome.resets_at, outcome.note or "Claude plan limit reached"
-        else:
+        resets_at, reason = outcome.resets_at, outcome.note or "Claude plan limit reached"
+        if not _believable_reset(resets_at, now):
             resets_at = now + PLAN_LIMIT_DEFAULT_PAUSE_S
-            reason = (outcome.note or "Claude plan limit reached") + " (reset time unknown: pausing 60 minutes)"
+            reason += " (reset time unknown: pausing 60 minutes)"
         state.claude_paused_until = resets_at
         state.reason = reason
         state.updated_at = now
-        updates = {"note": f"plan limit hit; Claude paused until {time.strftime('%H:%M', time.localtime(resets_at))}"}
+        # back to todo: step() marked it doing, and it has to be picked up again after the reset
+        updates = {
+            "state": "todo",
+            "note": f"plan limit hit; Claude paused until {time.strftime('%a %H:%M', time.localtime(resets_at))}",
+        }
     elif outcome.status == "needs_attention":
         attempts = item.get(attempts_key, 0) + 1
         updates[attempts_key] = attempts
@@ -340,4 +355,7 @@ def real_runner(item: dict, backend: str) -> Outcome:
     pipeline = Pipeline(cfg, roles, engine, NullReporter())
     summary = asyncio.run(pipeline.run(item["task"], project))
     note = "; ".join(summary.notes[:2]) if summary.notes else ""
-    return Outcome(status=summary.status, report=str(summary.run_dir / "report.md"), note=note)
+    return Outcome(
+        status=summary.status, report=str(summary.run_dir / "report.md"), note=note,
+        resets_at=summary.plan_resets_at,
+    )  # fmt: skip

@@ -267,6 +267,21 @@ def test_plan_limit_stops_everything(tmp_path: Path) -> None:
     assert roles_called(backend) == ["researcher", "architect"], "no further agent calls after the limit"
     assert PLAN_LIMIT_HINT in s.notes and any("protect your Claude plan" in n for n in s.notes)
     assert "plan limit" in (s.run_dir / "report.md").read_text(encoding="utf-8")
+    assert s.plan_resets_at is None  # the backend did not say when the plan resets
+
+
+def test_plan_limit_reset_time_reaches_the_summary(tmp_path: Path) -> None:
+    limit = AgentResult(False, subtype="plan_limit", error="stopped", resets_at=1_700_000_000.0)
+    pipe, _, _ = pipeline(base_script(architect=[limit]))
+    s = run(pipe, tmp_path / "proj")
+    assert s.status == "plan_limit" and s.plan_resets_at == 1_700_000_000.0
+    assert json.loads((s.run_dir / "summary.json").read_text(encoding="utf-8"))["plan_resets_at"] == 1_700_000_000.0
+
+
+def test_reset_time_is_only_reported_for_a_plan_limit(tmp_path: Path) -> None:
+    pipe, _, _ = pipeline(base_script())
+    s = run(pipe, tmp_path / "proj")
+    assert s.status == "success" and s.plan_resets_at is None
 
 
 def test_plan_limit_mid_run_runs_final_gate(tmp_path: Path) -> None:
