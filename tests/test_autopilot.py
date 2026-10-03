@@ -267,6 +267,53 @@ def test_step_puts_the_item_back_to_todo_after_a_plan_limit(tmp_path: Path) -> N
     assert State.load(state_path).claude_paused_until == 5000.0
 
 
+@pytest.mark.parametrize("status", ["failed", "budget_exhausted", "aborted", "something_new"])
+def test_step_never_strands_an_item_as_doing(tmp_path: Path, status: str) -> None:
+    queue_path, state_path = tmp_path / "queue.json", tmp_path / "autopilot-state.json"
+    workqueue.save(queue_path, [_item(id=1, tier=2)])
+    step(queue_path, state_path, _runner_queue([Outcome(status=status)]), now=0.0, decision=IDLE)
+    assert workqueue.load(queue_path)[0]["state"] == "todo"
+
+
+@pytest.mark.parametrize("exc", [KeyboardInterrupt, RuntimeError])
+def test_step_puts_the_item_back_when_the_run_raises(tmp_path: Path, exc: type[BaseException]) -> None:
+    queue_path, state_path = tmp_path / "queue.json", tmp_path / "autopilot-state.json"
+    workqueue.save(queue_path, [_item(id=1, tier=2)])
+
+    def runner(item: dict, backend: str) -> Outcome:
+        raise exc
+
+    with pytest.raises(exc):
+        step(queue_path, state_path, runner, now=0.0, decision=IDLE)
+    item = workqueue.load(queue_path)[0]
+    assert item["state"] == "todo" and item["attempts_claude"] == 0
+    assert State.load(state_path).current is None
+
+
+@pytest.mark.parametrize("status", ["failed", "budget_exhausted"])
+def test_failed_and_budget_exhausted_count_an_attempt_like_needs_attention(status: str) -> None:
+    item, state = _item(tier=2, state="doing"), State()
+    record(item, state, "claude", Outcome(status=status), now=0.0)
+    assert item["state"] == "todo" and item["attempts_claude"] == 1
+    record(item, state, "claude", Outcome(status=status), now=0.0)
+    assert item["state"] == "blocked" and item["attempts_claude"] == 2
+
+
+def test_a_tier1_item_that_fails_twice_locally_escalates_to_claude() -> None:
+    item, state = _item(tier=1, state="doing"), State()
+    record(item, state, "local", Outcome(status="failed"), now=0.0)
+    record(item, state, "local", Outcome(status="failed"), now=0.0)
+    assert item["state"] == "todo" and item["attempts_local"] == 2
+    assert choose(item, state, IDLE, now=0.0)[0] == "claude"
+
+
+@pytest.mark.parametrize("status", ["aborted", "something_new"])
+def test_an_interrupted_or_unknown_outcome_counts_no_attempt(status: str) -> None:
+    item = _item(tier=2, state="doing")
+    record(item, State(), "claude", Outcome(status=status), now=0.0)
+    assert item["state"] == "todo" and item["attempts_claude"] == 0 and item["attempts_local"] == 0
+
+
 def test_tier2_runs_on_claude_again_once_the_reset_passes(tmp_path: Path) -> None:
     queue_path, state_path = tmp_path / "queue.json", tmp_path / "autopilot-state.json"
     workqueue.save(queue_path, [_item(id=1, tier=2)])

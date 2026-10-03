@@ -71,7 +71,7 @@ def claude_available(state: State, now: float) -> bool:
 class Outcome:
     """What one run of an item produced."""
 
-    status: str  # "success" | "needs_attention" | "plan_limit"
+    status: str  # "success" | "needs_attention" | "plan_limit" | "failed" | "budget_exhausted" | "aborted"
     report: str = ""
     resets_at: float | None = None  # plan_limit only; None = unknown
     note: str = ""
@@ -148,7 +148,9 @@ def record(item: dict, state: State, backend: str, outcome: Outcome, now: float)
     window). needs_attention -> counts an attempt on
     `backend`; a tier 1 item that has now failed twice locally goes back to `todo` so the next `choose()`
     call escalates it to Claude via `route`; any item blocked after 2 failed attempts on Claude is marked
-    `blocked` for a human or the lead.
+    `blocked` for a human or the lead. failed and budget_exhausted count an attempt exactly like needs_attention.
+    aborted and any unknown status put the item back to `todo` without counting
+    an attempt: no outcome may leave it in the `doing` state that `step()` set, where nothing would pick it up again.
     """
     attempts_key = "attempts_claude" if backend == "claude" else "attempts_local"
     updates: dict[str, Any] = {}
@@ -168,7 +170,7 @@ def record(item: dict, state: State, backend: str, outcome: Outcome, now: float)
             "state": "todo",
             "note": f"plan limit hit; Claude paused until {time.strftime('%a %H:%M', time.localtime(resets_at))}",
         }
-    elif outcome.status == "needs_attention":
+    elif outcome.status in ("needs_attention", "failed", "budget_exhausted"):
         attempts = item.get(attempts_key, 0) + 1
         updates[attempts_key] = attempts
         if outcome.report:
@@ -185,7 +187,7 @@ def record(item: dict, state: State, backend: str, outcome: Outcome, now: float)
             updates["state"] = "todo"
             updates["note"] = outcome.note or f"attempt {attempts} on {backend} needs attention"
     else:
-        updates = {"note": outcome.note or outcome.status}
+        updates = {"state": "todo", "note": outcome.note or f"{outcome.status} on {backend}; back in the queue"}
 
     item.update(updates)
     state.last_item = item["id"]
@@ -238,7 +240,14 @@ def step(
     workqueue.save(queue_path, items)
     state.current = {"item": item["id"], "backend": backend, "why": why, "started_at": now}
     state.save(state_path)
-    outcome = run_item(item, backend, runner)
+    try:
+        outcome = run_item(item, backend, runner)
+    except BaseException:  # an interrupt or a crash: the item must not stay "doing", where nothing picks it up
+        item["state"] = "todo"
+        state.current = None
+        workqueue.save(queue_path, items)
+        state.save(state_path)
+        raise
     updates = record(item, state, backend, outcome, now)
     state.current = None
     workqueue.save(queue_path, items)
