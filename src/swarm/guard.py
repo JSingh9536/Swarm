@@ -71,6 +71,20 @@ _PATH_KEYS = {
 }
 _WRITE_TOOLS = frozenset({"Write", "Edit", "MultiEdit", "NotebookEdit"})
 
+# rea (local reverse-engineering MCP server): unattended runs get static analysis only. These tools run or attach to
+# live programs (processes, the user's browser/Electron/Node over CDP or the V8 inspector, replays) or change
+# Hopper's GUI state; whatever the role file says, the guard refuses them.
+_REA_PREFIX = "mcp__rea__"
+_REA_LIVE_RE = re.compile(
+    r"^(?:set_|unset_|goto_|capture_|observe_|execute_|prepare_node_|run_controlled_|list_browser_|list_electron_"
+    r"|list_javascript_runtime_|inspect_web_|inspect_electron_|analyze_web_|discover_webmcp_)"
+)
+_REA_READ_KEYS = (
+    "path", "input_path", "snapshot_path", "left_module_path", "right_module_path", "left_bundle_path",
+    "right_bundle_path",
+)  # fmt: skip
+_REA_WRITE_KEYS = {"export_evidence_bundle": ("path",), "close_binary": ("snapshot_path",)}
+
 
 def _norm(path: Path | str) -> str:
     return os.path.normcase(os.path.abspath(str(path)))
@@ -428,6 +442,8 @@ class Policy:
             if len(query) > self.max_query_chars:
                 return deny(f"search query is {len(query)} chars; keep queries short and never paste code")
             return ALLOW
+        if tool.startswith(_REA_PREFIX):
+            return self._check_rea(tool[len(_REA_PREFIX) :], data)
         if tool.startswith("mcp__"):
             size = len(str(data))
             if size > self.max_mcp_input_chars:
@@ -511,6 +527,25 @@ class Policy:
                 decision = self.check_path(str(value), write=write)
                 if not decision.allowed:
                     return decision
+        return ALLOW
+
+    # ---- rea
+
+    def _check_rea(self, name: str, data: dict[str, Any]) -> Decision:
+        """rea runs locally, so nothing leaves the machine and there is no size cap; its paths get the file rules."""
+        if _REA_LIVE_RE.match(name):
+            return deny(f"rea {name} runs, attaches to, or changes live software; only static analysis is allowed")
+        writes = _REA_WRITE_KEYS.get(name, ())
+        for key in dict.fromkeys((*_REA_READ_KEYS, *writes)):
+            value = data.get(key)
+            if not value:
+                continue
+            write = key in writes
+            if write and self.read_only:
+                return deny("this role is read-only")
+            decision = self.check_path(str(value), write=write)
+            if not decision.allowed:
+                return decision
         return ALLOW
 
     # ---- URLs
