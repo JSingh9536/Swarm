@@ -202,6 +202,64 @@ class TestOtherTools:
         assert allowed(policy, "mcp__grep__searchGitHub", {"query": "asyncio.gather("})
         assert not allowed(policy, "mcp__grep__searchGitHub", {"query": "x" * 2000})
 
+    # ---- rea (local reverse engineering): static analysis only
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "capture_process_scenario", "capture_browser_scenario", "capture_electron_scenario",
+            "observe_web_session", "observe_javascript_runtime", "execute_node_characterization",
+            "prepare_node_characterization", "run_controlled_replay", "list_browser_targets",
+            "list_electron_targets", "list_javascript_runtime_targets", "inspect_web_page", "inspect_electron_page",
+            "analyze_web_bundle", "discover_webmcp_tools", "set_comment", "set_address_name", "unset_bookmark",
+            "goto_address", "set_current_document",
+        ],
+    )  # fmt: skip
+    def test_rea_live_tools_blocked(self, policy: Policy, name: str) -> None:
+        decision = policy.check(f"mcp__rea__{name}", {})
+        assert not decision.allowed and "static analysis" in decision.reason
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "binary_session", "binary_overview", "list_strings", "search_strings", "procedure_pseudo_code",
+            "analyze_function", "get_call_graph", "inspect_artifact", "extract_artifact", "inspect_managed_artifact",
+            "trace_feature", "find_code_for_string", "list_unknowns", "comment", "list_bookmarks",
+        ],
+    )  # fmt: skip
+    def test_rea_static_tools_allowed(self, policy: Policy, name: str) -> None:
+        assert allowed(policy, f"mcp__rea__{name}", {})
+
+    def test_rea_open_checks_secret_paths(self, policy: Policy, project: Path) -> None:
+        assert allowed(policy, "mcp__rea__open_binary", {"path": str(project / "app.exe")})
+        assert allowed(policy, "mcp__rea__open_binary", {"path": outside_path("tool.exe")}), "reading is not limited"
+        assert not allowed(policy, "mcp__rea__open_binary", {"path": str(Path.home() / ".ssh" / "id_rsa")})
+        assert not allowed(policy, "mcp__rea__open_binary", {"path": str(project / ".env")})
+        assert not allowed(policy, "mcp__rea__inspect_plist", {"path": str(Path.home() / ".claude.json")})
+        assert not allowed(policy, "mcp__rea__analyze_javascript_application", {"input_path": "$HOME/.aws/x"})
+        assert not allowed(
+            policy, "mcp__rea__compare_bundles", {"left_bundle_path": "a.json", "right_bundle_path": "~/.aws/b"}
+        )
+
+    def test_rea_writes_stay_in_project(self, policy: Policy, project: Path) -> None:
+        assert allowed(policy, "mcp__rea__export_evidence_bundle", {"path": str(project / "evidence.json")})
+        assert allowed(policy, "mcp__rea__close_binary", {"snapshot_path": str(project / "snap.json")})
+        assert allowed(policy, "mcp__rea__close_binary", {})
+        assert not allowed(policy, "mcp__rea__export_evidence_bundle", {"path": outside_path("evidence.json")})
+        assert not allowed(policy, "mcp__rea__close_binary", {"snapshot_path": outside_path("snap.json")})
+        assert not allowed(policy, "mcp__rea__export_evidence_bundle", {"path": str(project / ".swarm" / "e.json")})
+
+    def test_rea_read_only_role_cannot_write(self, ro_policy: Policy, project: Path) -> None:
+        decision = ro_policy.check("mcp__rea__export_evidence_bundle", {"path": str(project / "e.json")})
+        assert not decision.allowed and "read-only" in decision.reason
+        assert not ro_policy.check("mcp__rea__close_binary", {"snapshot_path": str(project / "s.json")}).allowed
+        assert ro_policy.check("mcp__rea__close_binary", {}).allowed
+        assert ro_policy.check("mcp__rea__open_binary", {"path": str(project / "app.exe")}).allowed
+
+    def test_rea_has_no_size_cap(self, policy: Policy) -> None:
+        """rea runs locally - nothing leaves the machine - so large inline evidence is fine."""
+        assert allowed(policy, "mcp__rea__compare_functions", {"left": "x" * 5000, "right": "y" * 5000})
+
     def test_nested_agents_and_questions_blocked(self, policy: Policy) -> None:
         assert not allowed(policy, "Agent", {"prompt": "hi"})
         assert not allowed(policy, "Task", {"prompt": "hi"})

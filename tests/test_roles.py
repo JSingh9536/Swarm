@@ -90,12 +90,18 @@ def test_env_override(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 def test_shipped_roles_are_valid() -> None:
     roles = load_roles()
     expected = {
-        "architect", "debugger", "developer", "docs-writer", "researcher",
+        "architect", "debugger", "developer", "docs-writer", "researcher", "reverse-engineer",
         "reviewer", "security-auditor", "tech-lead", "tester",
     }  # fmt: skip
     assert expected <= set(roles)
     assert not roles["reviewer"].can_write
     assert not roles["security-auditor"].can_write
+    reverse = roles["reverse-engineer"]
+    assert reverse.mcp_servers == ["rea"]
+    assert not reverse.can_write and "Bash" not in reverse.tools and "PowerShell" not in reverse.tools
+    for name, role in roles.items():
+        if name not in ("reverse-engineer", "tech-lead"):
+            assert "rea" not in role.mcp_servers, f"{name} must not have rea"
     assert roles["developer"].can_write
     assert "WebFetch" in roles["researcher"].tools
     for name, role in roles.items():

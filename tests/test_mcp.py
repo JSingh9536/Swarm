@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import urllib.error
 from typing import Any
 
@@ -11,9 +12,95 @@ from swarm.mcp import CATALOG, DEFAULT_ENABLED, allow_patterns, probe, sdk_confi
 
 
 def test_catalog_is_https() -> None:
-    assert set(DEFAULT_ENABLED) == set(CATALOG) == {"grep", "deepwiki", "context7"}
+    assert set(CATALOG) == {"grep", "deepwiki", "context7", "rea"}
     for server in CATALOG.values():
-        assert server.url.startswith("https://")
+        assert server.local or server.url.startswith("https://")
+
+
+def test_local_servers_are_opt_in() -> None:
+    """A local server runs code on this machine, so it is never enabled by default."""
+    assert set(DEFAULT_ENABLED) == {"grep", "deepwiki", "context7"}
+    assert CATALOG["rea"].local and not CATALOG["grep"].local
+    assert "rea" not in DEFAULT_ENABLED
+
+
+def test_rea_is_pinned_to_one_version() -> None:
+    package = CATALOG["rea"].command[2]
+    assert package == f"rea-agents@{mcp.REA_VERSION}"
+    assert "latest" not in package and mcp.REA_VERSION.count(".") == 2
+
+
+def test_launch_command_wraps_npx_on_windows() -> None:
+    rea = CATALOG["rea"]
+    assert mcp.launch_command(rea, "win32") == ["cmd", "/c", "npx", "-y", f"rea-agents@{mcp.REA_VERSION}", "mcp"]
+    assert mcp.launch_command(rea, "linux") == ["npx", "-y", f"rea-agents@{mcp.REA_VERSION}", "mcp"]
+
+
+@pytest.mark.parametrize(
+    ("platform", "command", "prefix"), [("linux", "npx", []), ("darwin", "npx", []), ("win32", "cmd", ["/c", "npx"])]
+)
+def test_sdk_config_local_server(
+    monkeypatch: pytest.MonkeyPatch, platform: str, command: str, prefix: list[str]
+) -> None:
+    monkeypatch.setattr(mcp.sys, "platform", platform)
+    cfg = sdk_config(["grep", "rea"])
+    assert cfg["grep"]["type"] == "http"
+    assert cfg["rea"] == {
+        "type": "stdio", "command": command, "args": [*prefix, "-y", f"rea-agents@{mcp.REA_VERSION}", "mcp"],
+    }  # fmt: skip
+
+
+# --------------------------------------------------------------------------- stdio probe (no process started)
+
+
+def fake_run(monkeypatch: pytest.MonkeyPatch, outcome: str | Exception) -> list[Any]:
+    calls: list[Any] = []
+
+    def run(argv: list[str], **kw: Any) -> subprocess.CompletedProcess[str]:
+        calls.append((argv, kw))
+        if isinstance(outcome, Exception):
+            raise outcome
+        return subprocess.CompletedProcess(argv, 0, stdout=outcome, stderr="")
+
+    monkeypatch.setattr(mcp.subprocess, "run", run)
+    return calls
+
+
+def test_probe_stdio_reads_initialize_reply(monkeypatch: pytest.MonkeyPatch) -> None:
+    reply = json.dumps({"jsonrpc": "2.0", "id": 1, "result": {"serverInfo": {"name": "rea", "version": "3.2.1"}}})
+    calls = fake_run(monkeypatch, "npm notice: something\n" + reply + "\n")
+    assert mcp.probe_stdio(["npx", "rea"], timeout=5) == (True, "rea 3.2.1")
+    argv, kw = calls[0]
+    assert argv == ["npx", "rea"] and kw["timeout"] == 5
+    assert json.loads(kw["input"])["method"] == "initialize"
+
+
+def test_probe_stdio_failures(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_run(monkeypatch, "")
+    assert mcp.probe_stdio(["x"]) == (False, "no reply")
+    fake_run(monkeypatch, "{not json}\n")
+    assert mcp.probe_stdio(["x"]) == (False, "unexpected response")
+    fake_run(monkeypatch, FileNotFoundError("npx"))
+    ok, detail = mcp.probe_stdio(["x"])
+    assert not ok and "FileNotFoundError" in detail
+    fake_run(monkeypatch, subprocess.TimeoutExpired(["x"], 7))
+    assert mcp.probe_stdio(["x"], timeout=7) == (False, "no reply within 7s")
+
+
+def test_probe_stdio_timeout_after_reply(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A server that answers but keeps running until the timeout still counts as reachable."""
+    reply = json.dumps({"result": {"serverInfo": {"name": "rea", "version": "3.2.1"}}}).encode()
+    fake_run(monkeypatch, subprocess.TimeoutExpired(["x"], 7, output=reply))
+    assert mcp.probe_stdio(["x"], timeout=7) == (True, "rea 3.2.1")
+
+
+def test_check_dispatches_by_kind(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[str] = []
+    monkeypatch.setattr(mcp, "probe", lambda url, timeout=0: seen.append("http") or (True, "h"))
+    monkeypatch.setattr(mcp, "probe_stdio", lambda argv, timeout=0: seen.append("stdio") or (True, "s"))
+    assert mcp.check(CATALOG["grep"]) == (True, "h")
+    assert mcp.check(CATALOG["rea"]) == (True, "s")
+    assert seen == ["http", "stdio"]
 
 
 def test_sdk_config(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -520,6 +520,76 @@ def test_research_only_plan_limit(tmp_path: Path) -> None:
     assert asyncio.run(pipe.research("q", tmp_path / "scratch")).status == "plan_limit"
 
 
+# --------------------------------------------------------------------------- reverse engineering (rea)
+
+WITH_REA = ("grep", "deepwiki", "context7", "rea")
+REVERSE = ok(text="## Summary\nA .NET 8 app that stores tickets in SQLite.")
+
+
+def test_reverse_only(tmp_path: Path) -> None:
+    target = tmp_path / "app.exe"
+    target.write_bytes(b"MZ")
+    pipe, backend, _ = pipeline({"reverse-engineer": [REVERSE]}, mcp=WITH_REA)
+    s = asyncio.run(pipe.reverse(target, "how are tickets stored?", tmp_path / "scratch"))
+    assert s.status == "success" and "SQLite" in (s.research or "")
+    assert "SQLite" in (s.run_dir / "reverse.md").read_text(encoding="utf-8")
+    req = backend.requests[0]
+    assert req.role.name == "reverse-engineer" and req.read_only
+    assert list(req.mcp_servers) == ["rea"] and req.mcp_servers["rea"]["type"] == "stdio"
+    assert "mcp__rea__*" in req.allowed_tools
+    assert str(target) in req.prompt and "how are tickets stored?" in req.prompt
+    assert not (tmp_path / "scratch" / ".git").exists()
+
+
+def test_reverse_only_needs_rea_enabled(tmp_path: Path) -> None:
+    pipe, backend, _ = pipeline({"reverse-engineer": [REVERSE]})
+    s = asyncio.run(pipe.reverse(tmp_path / "app.exe", "", tmp_path / "scratch"))
+    assert s.status == "failed" and any("rea is not enabled" in n for n in s.notes)
+    assert backend.requests == [], "nothing runs when rea is off"
+
+
+def test_reverse_only_failure(tmp_path: Path) -> None:
+    pipe, _, _ = pipeline({"reverse-engineer": [fail("npx not found")]}, mcp=WITH_REA)
+    s = asyncio.run(pipe.reverse(tmp_path / "app.exe", "", tmp_path / "scratch"))
+    assert s.status == "failed" and any("reverse engineering failed: npx not found" in n for n in s.notes)
+
+
+def test_run_with_target_feeds_the_plan(tmp_path: Path) -> None:
+    target = tmp_path / "legacy.exe"
+    target.write_bytes(b"MZ")
+    pipe, backend, reporter = pipeline(base_script(**{"reverse-engineer": [REVERSE]}), mcp=WITH_REA)
+    s = asyncio.run(pipe.run("Replace the legacy app", tmp_path / "proj", run_id="r1", target=target))
+    assert s.status == "success"
+    assert roles_called(backend)[:3] == ["researcher", "reverse-engineer", "architect"]
+    assert reporter.phases[:4] == ["start", "research", "reverse", "plan"]
+    plan_prompt = backend.calls_for("architect")[0].prompt
+    assert "Use the standard library." in plan_prompt and "SQLite" in plan_prompt
+    assert "Replace the legacy app" in backend.calls_for("reverse-engineer")[0].prompt
+    assert (s.run_dir / "reverse.md").exists()
+    assert not backend.calls_for("developer")[0].mcp_servers, "only the reverse-engineer gets rea"
+
+
+def test_run_with_target_survives_reverse_failure(tmp_path: Path) -> None:
+    script = base_script(**{"reverse-engineer": [fail("provider missing")]})
+    pipe, _, _ = pipeline(script, mcp=WITH_REA)
+    s = asyncio.run(pipe.run("Build", tmp_path / "proj", run_id="r1", target=tmp_path / "x.exe"))
+    assert s.status == "success"
+    assert any("reverse engineering skipped: provider missing" in n for n in s.notes)
+
+
+def test_run_with_target_but_rea_off_skips(tmp_path: Path) -> None:
+    pipe, backend, _ = pipeline(base_script())
+    s = asyncio.run(pipe.run("Build", tmp_path / "proj", run_id="r1", target=tmp_path / "x.exe"))
+    assert s.status == "success" and "reverse-engineer" not in roles_called(backend)
+    assert any("rea is not enabled" in n for n in s.notes)
+
+
+def test_run_without_target_never_reverse_engineers(tmp_path: Path) -> None:
+    pipe, backend, _ = pipeline(base_script(), mcp=WITH_REA)
+    run(pipe, tmp_path / "proj")
+    assert "reverse-engineer" not in roles_called(backend)
+
+
 # --------------------------------------------------------------------------- wrap-up resume
 
 

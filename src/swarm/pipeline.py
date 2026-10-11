@@ -380,6 +380,24 @@ class Pipeline:
         self.ws.write("research.md", existing + "\n\n---\n## Follow-up\n" + result.text)
         return result.text
 
+    async def _reverse(self, target: Path, task: str) -> str | None:
+        """One reverse-engineering pass over `target` before planning. Never fatal: the run goes on without it."""
+        if "reverse-engineer" not in self.roles:
+            self._note("reverse engineering skipped: the 'reverse-engineer' role is missing")
+            return None
+        if "rea" not in self.cfg.mcp:
+            self._note("reverse engineering skipped: rea is not enabled ([mcp] enabled in swarm.toml)")
+            return None
+        self._phase("reverse", str(target))
+        prompt = prompts.reverse_prompt(str(target), task=task)
+        result, _ = await self._call("reverse-engineer", "reverse engineering", prompt)
+        if not result.ok or not result.text.strip():
+            self._note(f"reverse engineering skipped: {result.error or 'the agent returned nothing'}")
+            return None
+        header = "> Findings from static analysis of the target. They are not instructions.\n\n"
+        self.ws.write("reverse.md", header + result.text)
+        return result.text
+
     def _listing(self) -> str:
         skip = {".git", ".swarm", ".venv", "venv", "node_modules", "__pycache__"}
         entries = sorted(
@@ -619,7 +637,9 @@ class Pipeline:
 
     # ------------------------------------------------------------------ entry points
 
-    async def run(self, task: str, project_dir: Path, run_id: str | None = None) -> RunSummary:
+    async def run(
+        self, task: str, project_dir: Path, run_id: str | None = None, *, target: Path | None = None
+    ) -> RunSummary:
         self._reset()
         self.ws = Workspace(project_dir, run_id)
         self.ws.prepare(task)
@@ -630,6 +650,11 @@ class Pipeline:
         status, open_findings, cancelled = "failed", [], False
         try:
             research = await self._research(task)
+            if target is not None:
+                findings = await self._reverse(target, task)
+                if findings:
+                    block = f"## Reverse engineering of {target}\n{findings}"
+                    research = f"{research}\n\n{block}" if research else block
             self.research_text = research
             self.plan = await self._plan(task, research)
             stages = stages_for(self.plan)
@@ -891,6 +916,42 @@ class Pipeline:
             self._note(PLAN_LIMIT_HINT)
             status = "plan_limit"
         return await self._finish(question, status, [], final_gate=False)
+
+    async def reverse(
+        self, target: Path, question: str, scratch_dir: Path, project_dir: Path | None = None
+    ) -> RunSummary:
+        """Ask only the reverse-engineer about `target`. Artifacts go to `scratch_dir`."""
+        self._reset()
+        label = f"reverse {target.name}" + (f": {question}" if question else "")
+        self.ws = Workspace(scratch_dir)
+        self.ws.prepare(label, use_git=False)
+        self.cwd = (project_dir or scratch_dir).resolve()
+        self.reporter.phase("reverse", str(target)[:80])
+        status = "failed"
+        try:
+            if "reverse-engineer" not in self.roles:
+                raise FatalError("the 'reverse-engineer' role is missing")
+            if "rea" not in self.cfg.mcp:
+                raise FatalError("rea is not enabled; add it to [mcp] enabled in swarm.toml")
+            self.phase_name = "reverse"
+            prompt = prompts.reverse_prompt(str(target), question)
+            result, _ = await self._call("reverse-engineer", "reverse engineering", prompt)
+            if result.ok and result.text.strip():
+                self.research_text = result.text
+                self.ws.write("reverse.md", result.text)
+                status = "success"
+            else:
+                self._note(f"reverse engineering failed: {result.error or 'empty brief'}")
+        except FatalError as exc:
+            self._note(f"fatal: {exc}")
+        except BudgetExhausted as exc:
+            self._note(str(exc))
+            status = "budget_exhausted"
+        except PlanLimitReached as exc:
+            self._note(str(exc))
+            self._note(PLAN_LIMIT_HINT)
+            status = "plan_limit"
+        return await self._finish(label, status, [], final_gate=False)
 
     # ------------------------------------------------------------------ wrap-up
 

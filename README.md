@@ -60,6 +60,23 @@ swarm autopilot --dry-run                                         # what the que
 
 Cloud runs use a [Claude Code](https://claude.com/claude-code) login; local runs use [Ollama](https://ollama.com). `swarm --help` lists the rest (`research`, `status`, `load`, `hardware`, `flow`, `company`).
 
+### Reverse engineering (optional)
+
+The `reverse-engineer` role analyzes software you only have compiled (an executable, app bundle, archive, .NET assembly, or JavaScript/Electron app) with [rea](https://github.com/morluto/rea), a local MCP server pinned to one version. It is off by default because `npx` downloads and runs it on your machine. Turn it on in `swarm.toml`:
+
+```toml
+[mcp]
+enabled = ["grep", "deepwiki", "context7", "rea"]
+```
+
+```powershell
+swarm doctor                                                      # checks that rea starts
+swarm reverse .\vendor\legacy.exe "how does it store tickets?"   # one evidence-backed brief
+swarm run "replace the legacy tool" --target .\vendor\legacy.exe  # brief feeds the plan
+```
+
+Inside Claude Code use `/team-reverse <path> [question]`, after registering the server once: `claude mcp add --scope user rea -- npx -y rea-agents@3.2.1 mcp` (on Windows put `cmd /c` before `npx`). The guard allows static analysis only: rea's tools that run programs, attach to your browser or live runtimes, or change Hopper are blocked. Deep native analysis needs Hopper (macOS/Linux) or Ghidra; without them rea still inventories artifacts, strings, .NET metadata and JavaScript apps.
+
 ## Watch it work
 
 ```powershell
@@ -77,7 +94,7 @@ One page, light or dark, fine on a phone: what the swarm is doing right now, the
 | `src/swarm/gates.py` | real test and lint runs |
 | `src/swarm/load.py` | reads what the PC is doing and picks the engine |
 | `src/swarm/autopilot.py` | the unattended queue worker (copy [`queue.example.json`](queue.example.json) to `queue.json`) |
-| `.claude/agents/` | the nine role prompts, also usable as slash commands: `/team-build`, `/team-fix`, `/team-review`, `/team-research` |
+| `.claude/agents/` | the ten role prompts, also usable as slash commands: `/team-build`, `/team-fix`, `/team-review`, `/team-research`, `/team-reverse` |
 | `ui/` | the dashboard: standard library only, no build step |
 | `docs/operating-model.md` | how work is routed, and why |
 

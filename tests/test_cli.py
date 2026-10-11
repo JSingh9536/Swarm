@@ -36,9 +36,18 @@ def offline(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         def __init__(self, cfg: Any, roles: Any, backend: Any, reporter: Any = None, **kw: Any) -> None:
             state["pipelines"].append({"cfg": cfg, "backend": backend, "kw": kw})
 
-        async def run(self, task: str, project: Path, run_id: str | None = None) -> RunSummary:
+        async def run(
+            self, task: str, project: Path, run_id: str | None = None, *, target: Path | None = None
+        ) -> RunSummary:
             state["task"] = task
+            state["target"] = target
             return RunSummary("success", task, project, project / ".swarm" / "runs" / "x")
+
+        async def reverse(self, target: Path, question: str, scratch: Path, project: Path | None = None) -> RunSummary:
+            state["reverse"] = (target, question, project)
+            s = RunSummary("success", question, scratch, scratch)
+            s.research = "REVERSE BRIEF"
+            return s
 
         async def review(self, project: Path, *, base: str | None = None, fix: bool = False) -> RunSummary:
             state["review"] = (project, base, fix)
@@ -300,6 +309,64 @@ def test_research_metered_refused(capsys: pytest.CaptureFixture[str], offline: d
     assert main(capsys, "research", "q", "--yes")[0] == 2
 
 
+# --------------------------------------------------------------------------- reverse (rea)
+
+
+def rea_config(tmp_path: Path) -> Path:
+    path = tmp_path / "rea.toml"
+    path.write_text('[mcp]\nenabled = ["grep", "rea"]\n', encoding="utf-8")
+    return path
+
+
+def test_reverse_prints_and_saves(tmp_path: Path, capsys: pytest.CaptureFixture[str], fake_pipeline: dict) -> None:
+    target = tmp_path / "app.exe"
+    target.write_bytes(b"MZ")
+    save = tmp_path / "brief.md"
+    code, out = main(
+        capsys, "reverse", str(target), "how", "does", "it", "log", "in", "--yes", "--save", str(save),
+        "--config", str(rea_config(tmp_path)),
+    )  # fmt: skip
+    assert code == 0 and "REVERSE BRIEF" in out
+    assert save.read_text(encoding="utf-8") == "REVERSE BRIEF"
+    assert fake_pipeline["reverse"] == (target.resolve(), "how does it log in", None)
+
+
+def test_reverse_needs_rea_enabled(tmp_path: Path, capsys: pytest.CaptureFixture[str], fake_pipeline: dict) -> None:
+    target = tmp_path / "app.exe"
+    target.write_bytes(b"MZ")
+    code, out = main(capsys, "reverse", str(target), "--yes")
+    assert code == 2 and 'enabled = ["grep", "deepwiki", "context7", "rea"]' in out
+    assert "reverse" not in fake_pipeline and fake_pipeline["pipelines"] == []
+
+
+def test_reverse_missing_target(tmp_path: Path, capsys: pytest.CaptureFixture[str], fake_pipeline: dict) -> None:
+    code, out = main(capsys, "reverse", str(tmp_path / "nope.exe"), "--yes", "--config", str(rea_config(tmp_path)))
+    assert code == 2 and "Target not found" in out
+
+
+def test_run_with_target(tmp_path: Path, capsys: pytest.CaptureFixture[str], fake_pipeline: dict) -> None:
+    target = tmp_path / "legacy.exe"
+    target.write_bytes(b"MZ")
+    project = tmp_path / "proj"
+    args = ["run", "replace", "it", "--project", str(project), "--target", str(target), "--yes"]
+    code, out = main(capsys, *args, "--dry-run", "--config", str(rea_config(tmp_path)))
+    assert code == 0 and f"target:    {target.resolve()}" in out
+    code, _ = main(capsys, *args, "--config", str(rea_config(tmp_path)))
+    assert code == 0 and fake_pipeline["target"] == target.resolve()
+
+
+def test_run_with_target_needs_rea(tmp_path: Path, capsys: pytest.CaptureFixture[str], fake_pipeline: dict) -> None:
+    target = tmp_path / "legacy.exe"
+    target.write_bytes(b"MZ")
+    code, out = main(capsys, "run", "x", "--project", str(tmp_path / "p"), "--target", str(target), "--yes")
+    assert code == 2 and "rea" in out and fake_pipeline["pipelines"] == []
+
+
+def test_run_without_target_is_none(tmp_path: Path, capsys: pytest.CaptureFixture[str], fake_pipeline: dict) -> None:
+    code, _ = main(capsys, "run", "x", "--project", str(tmp_path / "p"), "--yes")
+    assert code == 0 and fake_pipeline["target"] is None
+
+
 # --------------------------------------------------------------------------- install-agents
 
 
@@ -360,7 +427,16 @@ def doctor_env(monkeypatch: pytest.MonkeyPatch) -> None:
     import swarm.mcp as mcp
 
     monkeypatch.setattr(mcp, "probe", lambda url, timeout=15: (True, "srv 1.0"))
+    monkeypatch.setattr(mcp, "probe_stdio", lambda argv, timeout=60: (True, "rea 3.2.1"))
     monkeypatch.setattr(cli, "_doctor_live", lambda *a: pytest.fail("the live check must not run in tests"))
+
+
+@pytest.mark.usefixtures("doctor_env")
+def test_doctor_probes_rea_only_when_enabled(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    _, out = main(capsys, "doctor")
+    assert "online source grep" in out and "local tool rea" not in out
+    _, out = main(capsys, "doctor", "--config", str(rea_config(tmp_path)))
+    assert "local tool rea: rea 3.2.1" in out
 
 
 @pytest.mark.usefixtures("doctor_env")

@@ -1,4 +1,4 @@
-"""Command-line interface for swarm: run, review, audit, company, research, roles, doctor, install-agents, demo."""
+"""Command-line interface for swarm: run, review, audit, company, research, reverse, roles, doctor, demo, ..."""
 
 from __future__ import annotations
 
@@ -18,8 +18,17 @@ from pathlib import Path
 from swarm import __version__
 from swarm.claude_cli import LOGIN_HELP, METERED_HELP, auth_info, billing_kind, cli_version, find_cli
 from swarm.config import Config, ConfigError, load_config
+from swarm.mcp import REA_VERSION
 from swarm.roles import Role, RoleError, load_roles, repo_root
 from swarm.workspace import slugify
+
+REA_HELP = (
+    "Reverse engineering uses rea, a local MCP server that npx downloads and runs on this machine.\n"
+    "It is off by default. To turn it on, add it to swarm.toml (keep the other servers you use):\n"
+    "  [mcp]\n"
+    '  enabled = ["grep", "deepwiki", "context7", "rea"]\n'
+    "Then check it with:  swarm doctor"
+)
 
 EXIT_OK, EXIT_ATTENTION, EXIT_SETUP, EXIT_BUDGET, EXIT_INTERRUPTED = 0, 1, 2, 3, 130
 STATUS_EXIT = {
@@ -202,6 +211,15 @@ def cmd_run(args: argparse.Namespace) -> int:
     if not explicit:
         project = _pick_project(cfg, task, None)
 
+    target = Path(args.target).expanduser().resolve() if getattr(args, "target", None) else None
+    if target is not None:
+        if not target.exists():
+            console.print(f"Target not found: {target}", markup=False)
+            return EXIT_SETUP
+        if "rea" not in cfg.mcp:
+            console.print(REA_HELP, markup=False)
+            return EXIT_SETUP
+
     lines = [
         "The engineering team will run unattended:",
         f"  task:      {task[:200]}",
@@ -212,6 +230,9 @@ def cmd_run(args: argparse.Namespace) -> int:
         + _model_line(cfg, roles, ["researcher", "architect", "developer", "tester", "reviewer", "security-auditor"]),
         "  guarded:   no git push / outbound shell network / secret access; writes stay inside the project folder",
     ]
+    if target is not None:
+        lines.insert(3, f"  target:    {target}  (reverse engineered locally with rea before planning)")
+        lines.insert(6, "  analysis:  " + _model_line(cfg, roles, ["reverse-engineer"]))
     if args.dry_run:
         _confirm(console, args, lines)
         console.print("Dry run: nothing was started.", markup=False)
@@ -225,7 +246,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     _apply_nice(args, console)
 
     pipeline = Pipeline(cfg, roles, backend, ConsoleReporter(console, args.verbose), cli_path=cli)
-    summary = _run_async(console, pipeline.run(task, project))
+    summary = _run_async(console, pipeline.run(task, project, target=target))
     _print_result(console, summary)
     return STATUS_EXIT.get(summary.status, EXIT_SETUP)
 
@@ -390,6 +411,47 @@ def cmd_research(args: argparse.Namespace) -> int:
     return STATUS_EXIT.get(summary.status, EXIT_SETUP)
 
 
+def cmd_reverse(args: argparse.Namespace) -> int:
+    from swarm.backend import ClaudeBackend
+    from swarm.pipeline import Pipeline
+    from swarm.report import ConsoleReporter
+
+    console = _console()
+    target = Path(args.target).expanduser().resolve()
+    if not target.exists():
+        console.print(f"Target not found: {target}", markup=False)
+        return EXIT_SETUP
+    question = " ".join(args.question).strip()
+    project = Path(args.project).expanduser().resolve() if args.project else None
+    cfg = _configure(args, project)
+    if "rea" not in cfg.mcp:
+        console.print(REA_HELP, markup=False)
+        return EXIT_SETUP
+    roles = _load_roles(cfg)
+    cli = _preflight(cfg, console)
+    _confirm(console, args, [
+        f"Reverse engineer: {target}",
+        f"  question: {question[:200] or '(general overview)'}",
+        f"  engine:   rea-agents {REA_VERSION}, run locally through npx; static analysis only",
+        f"  budget:   up to ${cfg.budget_usd:.2f}",
+    ])  # fmt: skip
+    _apply_nice(args, console)
+    scratch = cfg.workspace_dir / "_reverse"
+    backend = ClaudeBackend(plan_stop_at=cfg.plan_stop_at)
+    pipeline = Pipeline(cfg, roles, backend, ConsoleReporter(console, args.verbose), cli_path=cli)
+    summary = _run_async(console, pipeline.reverse(target, question, scratch, project))
+    if summary.research:
+        console.print("\n" + summary.research, markup=False)
+        if args.save:
+            Path(args.save).write_text(summary.research, encoding="utf-8")
+            console.print(f"\nSaved to {args.save}", markup=False)
+        else:
+            console.print(f"\n(also saved in {summary.run_dir / 'reverse.md'})", markup=False)
+    else:
+        _print_result(console, summary)
+    return STATUS_EXIT.get(summary.status, EXIT_SETUP)
+
+
 def cmd_roles(args: argparse.Namespace) -> int:
     console = _console()
     cfg = _configure(args, None)
@@ -477,7 +539,9 @@ def cmd_install(args: argparse.Namespace) -> int:
         "\nOnline code search (MCP servers) is configured separately. To enable it for every project run:\n"
         "  claude mcp add --transport http --scope user grep https://mcp.grep.app\n"
         "  claude mcp add --transport http --scope user deepwiki https://mcp.deepwiki.com/mcp\n"
-        "  claude mcp add --transport http --scope user context7 https://mcp.context7.com/mcp",
+        "  claude mcp add --transport http --scope user context7 https://mcp.context7.com/mcp\n"
+        "Reverse engineering (/team-reverse) needs the local rea server (on Windows put  cmd /c  before npx):\n"
+        f"  claude mcp add --scope user rea -- npx -y rea-agents@{REA_VERSION} mcp",
         markup=False,
     )
     return EXIT_OK
@@ -567,12 +631,15 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
     enabled = [n for n in cfg.mcp if n in mcp.CATALOG]
     with ThreadPoolExecutor(max_workers=max(1, len(enabled))) as pool:
+        # a local server's first start downloads it through npx, so it gets far longer than a hosted one
+        timeouts = {n: 120 if mcp.CATALOG[n].local else 12 for n in enabled}
         for name, (reachable, detail) in zip(
-            enabled, pool.map(lambda n: mcp.probe(mcp.CATALOG[n].url, 12), enabled), strict=True
+            enabled, pool.map(lambda n: mcp.check(mcp.CATALOG[n], timeouts[n]), enabled), strict=True
         ):
+            kind = "local tool" if mcp.CATALOG[name].local else "online source"
             show(
                 "OK" if reachable else "WARN",
-                f"online source {name}: {detail if reachable else 'unreachable - ' + detail}",
+                f"{kind} {name}: {detail if reachable else 'unreachable - ' + detail}",
             )
     if not enabled:
         show("SKIP", "online sources are disabled ([mcp] enabled = [])")
@@ -916,6 +983,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--dry-run", action="store_true", help="show what would run, without starting anything")
     p.add_argument("--local", action="store_true", help="run on a local Ollama model instead of the Claude plan")
     p.add_argument("--local-model", help="Ollama model for --local (default: qwen2.5-coder)")
+    p.add_argument(
+        "--target", help="a binary, app, archive or JavaScript app to reverse engineer with rea before planning"
+    )
     common(p)
     p.set_defaults(func=cmd_run)
 
@@ -953,6 +1023,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--save", help="write the brief to this file")
     common(p)
     p.set_defaults(func=cmd_research)
+
+    p = sub.add_parser("reverse", help="reverse engineer a binary, app, archive or JavaScript app (needs rea)")
+    p.add_argument("target", help="path to the file or folder to analyze")
+    p.add_argument("question", nargs="*", help="what to find out (default: a general overview)")
+    p.add_argument("--project", "-p", help="let the agent read this project for context")
+    p.add_argument("--save", help="write the brief to this file")
+    common(p)
+    p.set_defaults(func=cmd_reverse)
 
     p = sub.add_parser("roles", help="list the team's roles, models and tools")
     p.add_argument("--json", action="store_true")

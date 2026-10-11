@@ -103,6 +103,28 @@ snippets, Pitfalls, Sources, Confidence and gaps), under 700 words.
 """
 
 
+def reverse_prompt(target: str, question: str = "", task: str = "") -> str:
+    wanted = question.strip() or (
+        "What the target is and does, how it is built (format, language, frameworks, key libraries), its main "
+        "components and entry points, and anything a team building against or alongside it must know."
+    )
+    task_block = f"\n## Why the team needs this\n{task}\n" if task.strip() else ""
+    return f"""# Reverse-engineering request
+
+## Target
+{target}
+{task_block}
+## What to find out
+{wanted}
+
+## Constraints
+- Use only static analysis: open the target with rea, inspect it, close it. Never run it, attach to it, or use \
+rea's browser, Electron, runtime, replay or process-capture tools.
+- Effort: about 10-25 tool calls. Stop when more digging stops changing your answer.
+- Return your brief as your final message in the format from your role, under 700 words.
+"""
+
+
 def plan_prompt(
     task: str, listing: str, tests: list[str], lint: list[str], research: str | None, lessons: str | None = None
 ) -> str:
