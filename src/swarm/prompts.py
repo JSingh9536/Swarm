@@ -30,12 +30,12 @@ Using only what you have already learned in this session, return your final stru
 Do not read more files or run more commands. Where your work is incomplete, say so plainly in the report \
 (for example in `concerns`, `open_questions`, `risks` or the summary) instead of guessing."""
 
-# Adapted from the karpathy-guidelines skill (forrestchang/andrej-karpathy-skills, MIT), which collects Andrej
+# Adapted from the karpathy-guidelines skill (forrestchang/andrej-karpathy-skills v1.0.0, MIT), which collects Andrej
 # Karpathy's notes on common LLM coding mistakes. Reworded for an unattended pipeline: nobody can answer questions.
 CODING_GUIDELINES = """
 ## Coding guidelines
 - Think first: state your assumptions in your report. If the task reads two ways, pick the simpler reading and say \
-which one you picked; if a simpler approach than the plan exists, say so.
+which one you picked; if a simpler approach than the one you were given exists, say so.
 - Simplicity: the least code that meets the goal. No unrequested features, options or abstractions for one caller, \
 and no handling for cases that cannot happen. If it could be half the size, make it half the size.
 - Surgical: every changed line must trace to the task. Do not reformat, rename or refactor neighbouring code; match \
