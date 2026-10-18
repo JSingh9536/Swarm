@@ -30,6 +30,19 @@ Using only what you have already learned in this session, return your final stru
 Do not read more files or run more commands. Where your work is incomplete, say so plainly in the report \
 (for example in `concerns`, `open_questions`, `risks` or the summary) instead of guessing."""
 
+# Adapted from the karpathy-guidelines skill (forrestchang/andrej-karpathy-skills v1.0.0, MIT), which collects Andrej
+# Karpathy's notes on common LLM coding mistakes. Reworded for an unattended pipeline: nobody can answer questions.
+CODING_GUIDELINES = """
+## Coding guidelines
+- Think first: state your assumptions in your report. If the task reads two ways, pick the simpler reading and say \
+which one you picked; if a simpler approach than the one you were given exists, say so.
+- Simplicity: the least code that meets the goal. No unrequested features, options or abstractions for one caller, \
+and no handling for cases that cannot happen. If it could be half the size, make it half the size.
+- Surgical: every changed line must trace to the task. Do not reformat, rename or refactor neighbouring code; match \
+its style. Remove only the imports and helpers your own change made unused; mention other dead code, do not delete it.
+- Goal-driven: turn the goal into a check you can run (a failing test first, then make it pass) and loop until it \
+passes."""
+
 STRUCTURED_NOTE = (
     "- Your final message is captured as structured data: put your results in its fields "
     "(concise, specific, with real command output where asked)."
@@ -166,6 +179,7 @@ otherwise plan a greenfield project (Python projects should use a local `.venv`)
 - List anything that blocks a good design under `open_questions`; otherwise state assumptions in `architecture`.
 - Timebox your reading: you are planning, not doing the work. Use Glob/Grep to orient, read at most about 15 files, \
 then produce the plan. The developers will read the code in detail; leave deep investigation to work items.
+{CODING_GUIDELINES}
 """
 
 
@@ -211,6 +225,7 @@ def implement_prompt(
 - You have no web access. If you need outside information, list the exact questions under `needs_research`, \
 finish what you can, and continue.
 - Run the tests and linter yourself and report the real commands and results in `verified`.
+{CODING_GUIDELINES}
 {extra}"""
 
 
@@ -233,6 +248,7 @@ Find the root cause of each failure (reproduce first), fix it minimally at the c
 covers it. Never make the gate pass by deleting, skipping or loosening tests. Re-run the gate commands yourself:
 {_bullets(commands)}
 Report the real results.
+{CODING_GUIDELINES}
 """
 
 
@@ -259,6 +275,7 @@ def fix_prompt(task: str, plan: Plan, findings: list[Finding], round_no: int) ->
 - Add or update tests that would have caught each problem. Never delete, skip or weaken existing tests.
 - Keep changes minimal, then run the full test suite and the linter and report the real results.
 - You have no web access; list questions that need outside information under `needs_research`.
+{CODING_GUIDELINES}
 """
 
 
@@ -288,7 +305,9 @@ steps; severity `blocker`/`major` only for things that would really hurt a user.
 REVIEW_FOCUS = {
     "reviewer": (
         "Correctness first (logic errors, unhandled empty/error cases, encoding/path/time pitfalls, contradictions "
-        "with the acceptance criteria), then test quality, then design and maintainability."
+        "with the acceptance criteria), then test quality, then design and maintainability. Flag scope creep: "
+        "changed lines that do not trace to the task, unrequested features or options, and code that could be much "
+        "smaller (minor, or major when it adds risk)."
     ),
     "security-auditor": (
         "Injection (command/SQL/path/template), path traversal, unsafe deserialization, secrets, authn/authz, SSRF, "

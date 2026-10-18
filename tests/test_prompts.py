@@ -120,3 +120,17 @@ def test_other_prompts(plan: Plan) -> None:
     assert "- it works" in qa and "python cli.py add milk" in qa
     assert "- (none)" in prompts.qa_prompt("t", plan, [], [])
     assert "pytest" in prompts.docs_prompt("t", plan, ["pytest"])
+
+
+def test_coding_guidelines_reach_the_roles_that_write_code(plan: Plan, tmp_path: Path) -> None:
+    item = plan.work_items[0]
+    writers = {
+        "plan": prompts.plan_prompt("t", "- empty", [], [], None),
+        "implement": prompts.implement_prompt("t", plan, item, {}, tmp_path / "none.md", [], []),
+        "debug": prompts.debug_prompt("t", plan, "FAILED", ["pytest -q"]),
+        "fix": prompts.fix_prompt("t", plan, [Finding(severity="major", problem="p")], 1),
+    }
+    for name, text in writers.items():
+        assert prompts.CODING_GUIDELINES in text, name
+    assert prompts.CODING_GUIDELINES not in prompts.research_prompt("t")
+    assert "scope creep" in prompts.review_prompt("reviewer", "t", plan, "git diff", True, [], [])
