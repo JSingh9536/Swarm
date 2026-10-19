@@ -411,6 +411,50 @@ def cmd_research(args: argparse.Namespace) -> int:
     return STATUS_EXIT.get(summary.status, EXIT_SETUP)
 
 
+def cmd_plan(args: argparse.Namespace) -> int:
+    from swarm.backend import ClaudeBackend
+    from swarm.pipeline import Pipeline
+    from swarm.report import ConsoleReporter
+
+    console = _console()
+    request = _read_task(args)
+    if not request:
+        console.print('Say what you want:  swarm plan "add CSV export to invoices"  (or --task-file idea.md)',
+                      markup=False)  # fmt: skip
+        return EXIT_SETUP
+    project = Path(args.project).expanduser().resolve() if args.project else None
+    if project is not None and not project.is_dir():
+        console.print(f"Project folder not found: {project}", markup=False)
+        return EXIT_SETUP
+    cfg = _configure(args, project)
+    roles = _load_roles(cfg)
+    cli = _preflight(cfg, console)
+    _confirm(console, args, [
+        f"Plan: {request[:200]}",
+        f"  project: {project or '(new project)'}; the architect only reads it. Nothing is built; the plan files",
+        f"  go to {(project or cfg.workspace_dir / '_plan') / '.swarm' / 'runs'} and nothing else is written.",
+        f"  budget:  up to ${cfg.budget_usd:.2f}",
+    ])  # fmt: skip
+    _apply_nice(args, console)
+    target = project or cfg.workspace_dir / "_plan"
+    backend = ClaudeBackend(plan_stop_at=cfg.plan_stop_at)
+    pipeline = Pipeline(cfg, roles, backend, ConsoleReporter(console, args.verbose), cli_path=cli)
+    summary = _run_async(console, pipeline.plan_only(request, target))
+    doc = summary.run_dir / "plan-full.md"
+    if summary.status != "success" or not doc.is_file():
+        _print_result(console, summary)
+        return STATUS_EXIT.get(summary.status, EXIT_SETUP)
+    text = doc.read_text(encoding="utf-8")
+    if args.save:
+        Path(args.save).write_text(text, encoding="utf-8")
+        doc = Path(args.save).resolve()
+    console.print("\n" + text, markup=False)
+    console.print(f"Saved to {doc}", markup=False)
+    where = f' --project "{project}"' if project else ""
+    console.print(f'Read it, edit it, then build it:  swarm run{where} --task-file "{doc}"', markup=False)
+    return EXIT_OK
+
+
 def cmd_reverse(args: argparse.Namespace) -> int:
     from swarm.backend import ClaudeBackend
     from swarm.pipeline import Pipeline
@@ -1016,6 +1060,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--local-model", help="Ollama model for --local (default: qwen2.5-coder)")
     common(p)
     p.set_defaults(func=cmd_company)
+
+    p = sub.add_parser("plan", help="turn a one-line idea into a full written plan (plan only, nothing is built)")
+    p.add_argument("task", nargs="*", metavar="request", help="the idea, in plain words")
+    p.add_argument("--task-file", help="read the idea from a file instead")
+    p.add_argument("--project", "-p", help="plan against this existing project (read only)")
+    p.add_argument("--save", help="also write the plan to this file")
+    common(p)
+    p.set_defaults(func=cmd_plan)
 
     p = sub.add_parser("research", help="look up libraries, docs and real code examples online")
     p.add_argument("question", nargs="*")
