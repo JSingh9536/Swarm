@@ -86,6 +86,57 @@ def render_plan(plan: Plan, statuses: dict[str, str] | None = None) -> str:
     return "\n".join(lines)
 
 
+def plan_document(request: str, plan: Plan) -> str:
+    """The plan written out for a person: what was asked, what will be built, how to check it, what is unsettled.
+
+    Also a complete task for `swarm run --task-file`: the request, the design and the acceptance tests travel together.
+    """
+    lines = [
+        f"# Plan: {plan.title}",
+        "",
+        "## The request",
+        request.strip(),
+        "",
+        "## Goal",
+        plan.goal.strip(),
+        "",
+        f"Size: {plan.complexity}. Security-relevant: {'yes' if plan.security_relevant else 'no'}.",
+    ]
+    if plan.architecture.strip():
+        lines += ["", "## Design and scope", plan.architecture.strip()]
+    lines += ["", "## Steps"]
+    for n, w in enumerate(plan.work_items, 1):
+        lines.append(f"{n}. **{w.id} {w.title}**: {w.goal}")
+        if w.files:
+            lines.append(f"   - Files: {', '.join(w.files)}")
+        if w.depends_on:
+            lines.append(f"   - After: {', '.join(w.depends_on)}")
+        if w.done_check:
+            lines.append(f"   - Done when: {w.done_check}")
+    if not plan.work_items:
+        lines.append("- (none)")
+    lines += ["", "## Acceptance tests"]
+    for ac in plan.acceptance_criteria:
+        lines.append(f"- {ac.id}: {ac.text}" + (f" (check: {ac.verify})" if ac.verify else ""))
+    if not plan.acceptance_criteria:
+        lines.append("- (none)")
+    lines += [
+        "",
+        "## Commands",
+        f"- Tests: {', '.join(plan.test_commands) or '(detect from the project)'}",
+        f"- Lint: {', '.join(plan.lint_commands) or '(none)'}",
+    ]
+    if plan.run_instructions:
+        lines.append(f"- Run: {plan.run_instructions}")
+    lines += ["", "## Risks", _bullets(plan.risks)]
+    lines += [
+        "",
+        "## Questions for the owner",
+        _bullets(plan.open_questions, "- (none: assumptions are in the design)"),
+    ]
+    return "\n".join(lines) + "\n"
+
+
 def research_prompt(task: str, questions: list[str] | None = None) -> str:
     wanted = (
         _bullets(questions)
