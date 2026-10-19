@@ -107,7 +107,7 @@ def test_a_failed_architect_leaves_no_plan(tmp_path: Path) -> None:
 
 def test_cli_parses_plan_and_refuses_an_empty_request(capsys) -> None:
     args = build_parser().parse_args(["plan", "add", "CSV", "export", "--project", ".", "--yes", "--budget", "1"])
-    assert args.func is cmd_plan and args.request == ["add", "CSV", "export"] and args.budget == 1.0
+    assert args.func is cmd_plan and args.task == ["add", "CSV", "export"] and args.budget == 1.0
     empty = build_parser().parse_args(["plan"])
     assert cmd_plan(empty) == 2
     assert "swarm plan" in capsys.readouterr().out

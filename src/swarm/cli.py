@@ -417,9 +417,7 @@ def cmd_plan(args: argparse.Namespace) -> int:
     from swarm.report import ConsoleReporter
 
     console = _console()
-    request = " ".join(args.request).strip()
-    if args.task_file:
-        request = Path(args.task_file).read_text(encoding="utf-8").strip()
+    request = _read_task(args)
     if not request:
         console.print('Say what you want:  swarm plan "add CSV export to invoices"  (or --task-file idea.md)',
                       markup=False)  # fmt: skip
@@ -433,7 +431,8 @@ def cmd_plan(args: argparse.Namespace) -> int:
     cli = _preflight(cfg, console)
     _confirm(console, args, [
         f"Plan: {request[:200]}",
-        f"  project: {project or '(new project)'}; the architect only reads it, nothing is changed or built.",
+        f"  project: {project or '(new project)'}; the architect only reads it. Nothing is built; the plan files",
+        f"  go to {(project or cfg.workspace_dir / '_plan') / '.swarm' / 'runs'} and nothing else is written.",
         f"  budget:  up to ${cfg.budget_usd:.2f}",
     ])  # fmt: skip
     _apply_nice(args, console)
@@ -1063,7 +1062,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_company)
 
     p = sub.add_parser("plan", help="turn a one-line idea into a full written plan (plan only, nothing is built)")
-    p.add_argument("request", nargs="*", help="the idea, in plain words")
+    p.add_argument("task", nargs="*", metavar="request", help="the idea, in plain words")
     p.add_argument("--task-file", help="read the idea from a file instead")
     p.add_argument("--project", "-p", help="plan against this existing project (read only)")
     p.add_argument("--save", help="also write the plan to this file")
