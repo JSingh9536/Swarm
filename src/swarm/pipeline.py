@@ -917,6 +917,37 @@ class Pipeline:
             status = "plan_limit"
         return await self._finish(question, status, [], final_gate=False)
 
+    async def plan_only(self, task: str, project_dir: Path) -> RunSummary:
+        """Ask only the architect: turn a short request into a full written plan. Nothing in the project changes.
+
+        Writes `plan.json`, `plan.md` and `plan-full.md` to the run folder; `plan-full.md` is meant to be read by a
+        person and then handed to `swarm run --task-file`.
+        """
+        self._reset()
+        self.ws = Workspace(project_dir)
+        self.ws.prepare(task, use_git=False)
+        self.cwd = self.ws.project_dir
+        self.reporter.phase("start", f"project: {self.ws.project_dir}")
+        status = "failed"
+        try:
+            if "architect" not in self.roles:
+                raise FatalError("the 'architect' role is missing")
+            self.plan = await self._plan(task, None)
+            self.ws.write("plan-full.md", prompts.plan_document(task, self.plan))
+            status = "success"
+        except PlanError as exc:
+            self._note(f"planning failed: {exc}")
+        except FatalError as exc:
+            self._note(f"fatal: {exc}")
+        except BudgetExhausted as exc:
+            self._note(str(exc))
+            status = "budget_exhausted"
+        except PlanLimitReached as exc:
+            self._note(str(exc))
+            self._note(PLAN_LIMIT_HINT)
+            status = "plan_limit"
+        return await self._finish(task, status, [], final_gate=False)
+
     async def reverse(
         self, target: Path, question: str, scratch_dir: Path, project_dir: Path | None = None
     ) -> RunSummary:

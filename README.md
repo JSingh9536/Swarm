@@ -58,7 +58,7 @@ swarm audit  -p .\my-project                                      # whole-codeba
 swarm autopilot --dry-run                                         # what the queue would run, and on which engine
 ```
 
-Cloud runs use a [Claude Code](https://claude.com/claude-code) login; local runs use [Ollama](https://ollama.com). `swarm --help` lists the rest (`research`, `status`, `load`, `hardware`, `flow`, `company`).
+Cloud runs use a [Claude Code](https://claude.com/claude-code) login; local runs use [Ollama](https://ollama.com). `swarm --help` lists the rest (`plan`, `research`, `status`, `load`, `hardware`, `flow`, `company`).
 
 ### Reverse engineering (optional)
 
