@@ -85,6 +85,16 @@ cd ui; ..\.venv\Scripts\python.exe -m swarm_ui
 
 One page, light or dark, fine on a phone: what the swarm is doing right now, the work queue, the autopilot log, PC health, usage, and a live network view of the agents handing work to each other. It listens on `127.0.0.1` only, with a fresh token per launch. Details in [`ui/README.md`](ui/README.md).
 
+Prefer a real desktop window? `swarm_desk` shows the team as a live neural network: agents fire, tool calls spike,
+synapses thicken with every handoff, and each agent has a membrane-potential trace. It can also launch the free demo or
+a real run and follow it live:
+
+```powershell
+cd desk; ..\.venv\Scripts\python.exe -m swarm_desk --demo
+```
+
+See [`desk/README.md`](desk/README.md).
+
 ## Under the hood
 
 | Path | What lives there |
@@ -96,6 +106,7 @@ One page, light or dark, fine on a phone: what the swarm is doing right now, the
 | `src/swarm/autopilot.py` | the unattended queue worker (copy [`queue.example.json`](queue.example.json) to `queue.json`) |
 | `.claude/agents/` | the ten role prompts, also usable as slash commands: `/team-build`, `/team-fix`, `/team-review`, `/team-research`, `/team-reverse` |
 | `ui/` | the dashboard: standard library only, no build step |
+| `desk/` | the desktop neuron view and run harness (Tk, standard library only) |
 | `docs/operating-model.md` | how work is routed, and why |
 
 The guard is defense in depth, not a sandbox. Run the swarm on projects you would let a new colleague work on.

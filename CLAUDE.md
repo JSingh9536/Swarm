@@ -17,6 +17,7 @@ Two front ends share one set of role prompts (`.claude/agents/*.md`):
 - `src/swarm/` orchestrator: `pipeline.py` (process), `guard.py` (tool policy), `gates.py` (real test/lint runs),
   `backend.py` (Claude engine via the SDK), `workspace.py` (.swarm/ artifacts + git), `cli.py`
 - `ui/` separate project: local-only dashboard to monitor/command the swarm (`python -m swarm_ui`, see `ui/README.md`)
+- `desk/` separate project: native desktop neuron view + harness (`python -m swarm_desk`, Tk; reuses `swarm_ui`)
 - `tests/` offline suite; `workspace/` output projects (git-ignored)
 
 ## Commands (Windows)
