@@ -104,7 +104,8 @@ class Desk:
         self._bind_keys()
         self.refresh_runs()
         root.protocol("WM_DELETE_WINDOW", self.close)
-        root.after(10, self.frame)
+        self.closed = False
+        self.tick = root.after(10, self.frame)
 
     # ------------------------------------------------------------------ layout
 
@@ -519,6 +520,8 @@ class Desk:
             self.shocks.append([fx.a, 0.0, fx.bad])
 
     def frame(self) -> None:
+        if self.closed:
+            return
         now = time.monotonic()
         dt = min(0.1, now - self.last)
         self.last = now
@@ -542,7 +545,8 @@ class Desk:
             self._flush_feed()
             self._status()
         finally:
-            self.root.after(max(1, int(1000 / FPS - (time.monotonic() - now) * 1000)), self.frame)
+            if not self.closed:
+                self.tick = self.root.after(max(1, int(1000 / FPS - (time.monotonic() - now) * 1000)), self.frame)
 
     def _draw(self, now: float, dt: float) -> None:
         c, b = self.canvas, self.brain
@@ -811,4 +815,6 @@ class Desk:
             if not messagebox.askyesno("Swarm Desk", "A job is still running. Stop it and quit?"):
                 return
             self.jobs.shutdown()
+        self.closed = True  # no frame may draw into a destroyed window
+        self.root.after_cancel(self.tick)
         self.root.destroy()
