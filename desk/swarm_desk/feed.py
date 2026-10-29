@@ -150,6 +150,8 @@ def newest_active(root: Path, within: float = 20.0) -> RunRef | None:
             mtime = events.stat().st_mtime
         except OSError:
             continue
+        if not (events.parent / "task.md").exists():
+            continue  # not prompted yet: nothing to show
         if time.time() - mtime < within and (best is None or mtime > best[0]):
             best = (mtime, events.parent)
     if best is None or (best[1] / "summary.json").exists():

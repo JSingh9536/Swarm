@@ -125,6 +125,8 @@ def test_parallel_hooks_of_one_session_agree_on_one_folder() -> None:
 
 
 def test_newest_active_finds_the_working_session(store: Path) -> None:
+    hook.record(payload("SessionStart", source="startup"))
+    assert newest_active(store) is None, "a session nobody prompted yet (or a one-off CLI call) is not followed"
     hook.record(payload("UserPromptSubmit", prompt="hi"))
     ref = newest_active(store)
     assert ref is not None and ref.source == "claude" and ref.project == "My-Project"

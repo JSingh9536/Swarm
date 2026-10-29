@@ -299,6 +299,8 @@ class Desk:
             group = self.runs.insert("", "end", iid=f"group:{source}", text=title, open=True, tags=("group",))
             for info in list_runs(self.roots[source]):
                 ref = RunRef(info["project"], info["run"], source)
+                if source == "claude" and not info["task"]:
+                    continue  # never prompted (e.g. a one-off `claude mcp ...` call): nothing to watch
                 status = self._session_status(ref) if source == "claude" else info["status"]
                 cost = "" if source == "claude" else f"{float(info['cost_usd'] or 0):.2f}"
                 self.runs.insert(group, "end", iid=ref.iid, text=f"{info['project']}  {info['run'][9:]}",
