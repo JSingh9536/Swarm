@@ -543,7 +543,8 @@ def cmd_demo(args: argparse.Namespace) -> int:
         markup=False,
     )
     _apply_nice(args, console)
-    pipeline = Pipeline(cfg, roles, demo_backend(project), ConsoleReporter(console, args.verbose))
+    pace = min(max(args.pace, 0.0), 5.0)
+    pipeline = Pipeline(cfg, roles, demo_backend(project, pace), ConsoleReporter(console, args.verbose))
     summary = _run_async(console, pipeline.run("Demo: a tested slugify helper", project))
     _print_result(console, summary)
     return STATUS_EXIT.get(summary.status, EXIT_SETUP)
@@ -1096,6 +1097,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("demo", help="run a scripted team through the real pipeline: free, offline, no login")
     common(p, run_like=False)
+    p.add_argument(
+        "--pace", type=float, default=0.0, help="seconds per scripted tool call, so a dashboard can follow (max 5)"
+    )
     p.set_defaults(func=cmd_demo)
 
     p = sub.add_parser("hardware", help="live CPU / GPU / power readout and power controls for local runs")

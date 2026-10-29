@@ -7,6 +7,7 @@ import json
 import shutil
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -446,6 +447,24 @@ def test_demo_backend_end_to_end(tmp_path: Path) -> None:
     assert "3 passed" in s.gate.results[0].output
     assert sorted(s.changed_files) == ["slugify.py", "test_slugify.py"]
     assert not (project / ".venv").exists(), "the demo must not bootstrap a venv"
+    lines = [json.loads(x) for x in (project / ".swarm" / "runs" / "r1" / "events.jsonl").read_text().splitlines()]
+    tools = [e for e in lines if e["kind"] == "activity"]
+    assert {e["role"] for e in tools} >= {"researcher", "developer", "reviewer"}, "a dashboard needs tool activity"
+    assert any(e["text"] == "Write slugify.py" for e in tools)
+
+
+def test_scripted_pace_waits_before_each_tool_line(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    waits: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        waits.append(seconds)
+
+    monkeypatch.setattr(asyncio, "sleep", fake_sleep)
+    backend = ScriptedBackend({"developer": [ok()]}, activity={"developer": ["Read a", "Write b"]}, pace=0.5)
+    seen: list[tuple[str, str]] = []
+    request: Any = SimpleNamespace(role=ROLES["developer"])  # the scripted backend only reads the role
+    asyncio.run(backend.run(request, lambda kind, text: seen.append((kind, text))))
+    assert waits == [0.5, 0.5] and seen == [("tool", "Read a"), ("tool", "Write b")]
 
 
 # --------------------------------------------------------------------------- review() / research()
