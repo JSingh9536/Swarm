@@ -16,8 +16,9 @@ from tkinter import font as tkfont
 from tkinter import messagebox, ttk
 from typing import Any
 
+from swarm_desk import sessions
 from swarm_desk.brain import PHASES, Brain, Neuron
-from swarm_desk.feed import SPEEDS, Player, RunRef, Tail, folder, is_live, list_runs, newest_since
+from swarm_desk.feed import SPEEDS, Player, RunRef, Tail, folder, is_live, list_runs, newest_active, newest_since
 from swarm_ui.jobs import Job, JobError, JobManager
 from swarm_ui.runs import list_projects
 
@@ -26,7 +27,8 @@ BG, PANEL, PANEL2, LINE = "#0a0e16", "#0f1522", "#141c2c", "#22304a"
 TEXT, MUTED, DIM = "#e7eef9", "#8391ab", "#4a5874"
 ACCENT, OK, BAD, WARN, VIOLET = "#5fe3ff", "#47e08b", "#ff5f6e", "#ffc44d", "#a98bff"
 UI_FONT, MONO = "Helvetica Neue", "Menlo"
-STATUS_TONE = {"success": OK, "running": ACCENT, "failed": BAD, "interrupted": WARN, "aborted": BAD}
+STATUS_TONE = {"success": OK, "running": ACCENT, "failed": BAD, "interrupted": WARN, "aborted": BAD, "live": ACCENT,
+               "idle": MUTED, "ended": OK}  # fmt: skip
 
 
 def blend(color: str, base: str, f: float) -> str:
@@ -38,7 +40,7 @@ def blend(color: str, base: str, f: float) -> str:
 
 
 def tint(n: Neuron) -> str:
-    return {"active": ACCENT, "done": OK, "failed": BAD}.get(n.state, MUTED)
+    return {"active": ACCENT, "waiting": VIOLET, "done": OK, "failed": BAD}.get(n.state, MUTED)
 
 
 def hhmmss(t: float) -> str:
@@ -66,8 +68,12 @@ def at(p: list[tuple[float, float]], t: float) -> tuple[float, float]:
 
 
 class Desk:
-    def __init__(self, root: tk.Tk, repo: Path, workspace: Path, data_dir: Path) -> None:
+    def __init__(
+        self, root: tk.Tk, repo: Path, workspace: Path, data_dir: Path, sessions_root: Path | None = None
+    ) -> None:
         self.root, self.repo, self.workspace = root, repo, workspace
+        self.roots = {"swarm": workspace, "claude": sessions_root or sessions.root()}
+        self.last_follow = 0.0
         self.jobs = JobManager(repo, data_dir)
         self.job: Job | None = None
         self.job_offset = 0
@@ -77,6 +83,7 @@ class Desk:
         self.ref: RunRef | None = None
         self.mode = "idle"  # idle | live | replay
         self.selected = "developer"
+        self.pinned_until = 0.0  # a click keeps its neuron in the inspector for a while
         self.pos: dict[str, tuple[float, float]] = {}
         self.pulses: list[dict[str, Any]] = []
         self.sparks: list[list[float]] = []
@@ -172,6 +179,7 @@ class Desk:
         self.runs.column("cost", width=44, anchor="e")
         for status, color in STATUS_TONE.items():
             self.runs.tag_configure(status, foreground=color)
+        self.runs.tag_configure("group", foreground=MUTED, font=(UI_FONT, 10, "bold"))
         self.runs.pack(fill="both", expand=True, pady=(6, 6))
         self.runs.bind("<Double-1>", lambda _e: self.open_selected())
         self.runs.bind("<Return>", lambda _e: self.open_selected())
@@ -286,11 +294,14 @@ class Desk:
         self.last_runs = time.monotonic()
         keep = self.runs.selection()
         self.runs.delete(*self.runs.get_children())
-        for info in list_runs(self.workspace):
-            iid = f"{info['project']}/{info['run']}"
-            cost = info["cost_usd"]
-            self.runs.insert("", "end", iid=iid, text=f"{info['project']}  {info['run'][9:]}",
-                             values=(info["status"], f"{float(cost or 0):.2f}"), tags=(info["status"],))  # fmt: skip
+        for source, title in (("claude", "Claude Code sessions"), ("swarm", "swarm runs")):
+            group = self.runs.insert("", "end", iid=f"group:{source}", text=title, open=True, tags=("group",))
+            for info in list_runs(self.roots[source]):
+                ref = RunRef(info["project"], info["run"], source)
+                status = self._session_status(ref) if source == "claude" else info["status"]
+                cost = "" if source == "claude" else f"{float(info['cost_usd'] or 0):.2f}"
+                self.runs.insert(group, "end", iid=ref.iid, text=f"{info['project']}  {info['run'][9:]}",
+                                 values=(status, cost), tags=(info["status"],))  # fmt: skip
         if keep and self.runs.exists(keep[0]):
             self.runs.selection_set(keep[0])
         projects = list_projects(self.workspace)
@@ -298,14 +309,24 @@ class Desk:
         if not self.project.get():
             self.project.set("(new project)")
 
+    def _session_status(self, ref: RunRef) -> str:
+        path = folder(self.roots["claude"], ref)
+        if path is None or (path / "summary.json").exists():
+            return "ended"
+        try:
+            quiet = time.time() - (path / "events.jsonl").stat().st_mtime
+        except OSError:
+            return "idle"
+        return "live" if quiet < 120 else "idle"
+
     def open_selected(self) -> None:
         sel = self.runs.selection()
-        if sel:
-            project, run = sel[0].split("/", 1)
-            self.open(RunRef(project, run))
+        ref = RunRef.from_iid(sel[0]) if sel else None
+        if ref:
+            self.open(ref)
 
     def open(self, ref: RunRef, live: bool | None = None) -> None:
-        path = folder(self.workspace, ref)
+        path = folder(self.roots[ref.source], ref)
         if path is None:
             return
         self.ref, self.tail = ref, Tail(path)
@@ -319,7 +340,8 @@ class Desk:
             self.mode = "replay"
         task = path / "task.md"
         text = task.read_text(encoding="utf-8", errors="replace").strip() if task.exists() else ""
-        self.r_task.configure(text=f"{ref.key}\n{text[:220]}", style="TLabel")
+        where = "Claude Code session" if ref.source == "claude" else "swarm run"
+        self.r_task.configure(text=f"{where} · {ref.key}\n{text[:220]}", style="TLabel")
 
     def _reset_view(self) -> None:
         self.brain.reset()
@@ -337,7 +359,7 @@ class Desk:
             for fx in effects:
                 self._spawn(fx)
         active = self.brain.active
-        if active and events:
+        if active and events and time.monotonic() > self.pinned_until:
             self.selected = active.name
 
     def seek(self, index: int) -> None:
@@ -437,10 +459,25 @@ class Desk:
             new = self.tail.read_new()
             if new:
                 self.player.extend(new)
-            elif self.mode == "live" and self.player.done and not is_live(self.tail.folder, 30):
+            elif self.mode == "live" and self.player.done and self._finished():
                 self.mode = "replay"  # the run finished: stay on its last frame
                 self.player.paused = True
                 self.refresh_runs()
+        now = time.monotonic()
+        if self.follow.get() and not self.job and self.mode != "replay" and now - self.last_follow > 1.5:
+            self.last_follow = now
+            ref = newest_active(self.roots["claude"])
+            if ref and ref != self.ref:  # a Claude Code session is working: show it
+                self.refresh_runs()
+                self.open(ref, live=True)
+
+    def _finished(self) -> bool:
+        """A pipeline run is over once it goes quiet; a Claude session only when it ends (it idles between prompts)."""
+        if self.tail is None or self.ref is None:
+            return True
+        if self.ref.source == "claude":
+            return (self.tail.folder / "summary.json").exists()
+        return not is_live(self.tail.folder, 30)
 
     # ------------------------------------------------------------------ drawing
 
@@ -630,7 +667,10 @@ class Desk:
         c = self.ribbon
         c.delete("all")
         seen = [p for p, _ in self.brain.phases]
-        names = [p for p in PHASES if p != "reverse" or "reverse" in seen]
+        if set(seen) <= set(PHASES):
+            names = [p for p in PHASES if p != "reverse" or "reverse" in seen]
+        else:  # a Claude Code session: its own phases, in the order they happened
+            names = list(dict.fromkeys(reversed(seen)))[:7][::-1]
         current = self.brain.phase
         x = 4
         for i, name in enumerate(names):
@@ -692,6 +732,7 @@ class Desk:
         name = self._hit(e.x, e.y)
         if name:
             self.selected = name
+            self.pinned_until = time.monotonic() + 15
 
     def _hover(self, e: tk.Event) -> None:
         self.canvas.configure(cursor="hand2" if self._hit(e.x, e.y) else "crosshair")

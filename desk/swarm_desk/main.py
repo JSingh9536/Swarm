@@ -18,7 +18,16 @@ def _paths() -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    p = argparse.ArgumentParser(prog="swarm-desk", description="Desktop neuron view of the swarm.")
+    argv = sys.argv[1:] if argv is None else argv
+    if argv[:1] and argv[0] in ("connect", "disconnect", "status"):  # wire Claude Code sessions in (or out)
+        from swarm_desk import connect
+
+        return getattr(connect, argv[0])()
+    p = argparse.ArgumentParser(
+        prog="swarm-desk",
+        description="Desktop neuron view of the swarm.",
+        epilog="also: swarm-desk connect | disconnect | status (Claude Code sessions)",
+    )
     p.add_argument("--workspace", type=Path, default=REPO / "workspace", help="where the swarm's projects live")
     p.add_argument("--demo", action="store_true", help="start the free scripted demo as soon as the window opens")
     p.add_argument("--open", metavar="PROJECT/RUN", help="open this run (replay, or live if it is still going)")

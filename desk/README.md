@@ -24,6 +24,27 @@ so the same validation and no-shell rules apply.
   agent starts cyan, gates green/red). Click or drag it to seek.
 - **Activity / Harness log.** A colour-coded feed of the run, and the raw output of the job the harness started.
 
+## Watch your Claude Code sessions
+
+```sh
+swarm-desk connect     # once: hooks in ~/.claude/settings.json (backed up) + the swarm-desk MCP server, user scope
+swarm-desk status      # what is installed, how many sessions were recorded
+swarm-desk disconnect  # removes exactly what connect added
+```
+
+After `connect`, every new `claude` terminal session shows up under *Claude Code sessions*, and with *Follow* on the
+window switches to whichever session is working:
+
+- **Hooks record the work automatically**: each prompt fires the `lead (you)` neuron. Each subagent the lead starts is
+  a handoff, and each result it returns is a pulse back. Parallel subagents work side by side while the lead waits
+  (violet). Every tool call is a spike, a blocked permission is a red spark, and a pytest/ruff/npm-test run is a gate
+  (PASS/FAIL), so the build → test → fix loop is visible. Hooks run async and never slow the session. Only short
+  descriptions are kept (a command's first line, a file path, never file contents), in `.data/sessions/` on this machine.
+- **The MCP server adds what only the lead knows**: `desk_phase` (plan, review round 2…), `desk_gate`, `desk_note`.
+  `/team-build` and `/team-fix` call them when the server is connected.
+
+Sessions already open when you connect are not recorded; start a new one.
+
 ## Harness
 - **▶ Demo (free)** runs `swarm demo --pace 0.6`: the scripted team through the real pipeline (real git, real pytest),
   no model calls, slowed down so you can watch it.

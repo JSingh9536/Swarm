@@ -19,10 +19,21 @@ SPEEDS = (0.5, 1.0, 2.0, 4.0, 8.0)
 class RunRef:
     project: str
     run: str
+    source: str = "swarm"  # swarm (a pipeline run under the workspace) | claude (a recorded Claude Code session)
 
     @property
     def key(self) -> str:
         return f"{self.project}/{self.run}"
+
+    @property
+    def iid(self) -> str:
+        return f"{self.source}:{self.key}"
+
+    @classmethod
+    def from_iid(cls, iid: str) -> RunRef | None:
+        source, _, key = iid.partition(":")
+        project, _, run = key.partition("/")
+        return cls(project, run, source) if source in ("swarm", "claude") and project and run else None
 
 
 class Tail:
@@ -129,6 +140,22 @@ def newest_since(workspace: Path, since: float) -> RunRef | None:
         if info["updated"] >= since - 2 and (best is None or info["updated"] > best[0]):
             best = (info["updated"], RunRef(info["project"], info["run"]))
     return best[1] if best else None
+
+
+def newest_active(root: Path, within: float = 20.0) -> RunRef | None:
+    """The Claude Code session that wrote most recently, if it did so in the last `within` seconds."""
+    best: tuple[float, Path] | None = None
+    for events in root.glob("*/.swarm/runs/*/events.jsonl") if root.is_dir() else []:
+        try:
+            mtime = events.stat().st_mtime
+        except OSError:
+            continue
+        if time.time() - mtime < within and (best is None or mtime > best[0]):
+            best = (mtime, events.parent)
+    if best is None or (best[1] / "summary.json").exists():
+        return None
+    run = best[1]
+    return RunRef(run.parents[2].name, run.name, "claude")
 
 
 def folder(workspace: Path, ref: RunRef) -> Path | None:

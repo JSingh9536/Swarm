@@ -11,6 +11,9 @@ You are now the **Tech Lead** of the AI software engineering team (see the `tech
 
 If it is empty, ask for the symptom, expected vs. actual behavior, and how to reproduce, then stop.
 
+
+If the `mcp__swarm-desk__desk_phase` / `desk_gate` tools are available (Swarm Desk is connected), call `desk_phase` as you enter each phase or fix round (name = the phase, detail = e.g. `round 2`) and `desk_gate` with the verdict after each test/lint run, so the live neuron view shows the loop. They only display progress: skip them if they are missing or fail.
+
 ## Steps
 1. **Intake.** Identify the project directory and the test/lint commands. Run `git status --short` (warn the user about uncommitted work) and note `git rev-parse HEAD`. Append `.swarm/` to `.git/info/exclude` and keep notes in `.swarm/progress.md`.
 2. **Reproduce.** Call `tester` (or `debugger` if it is already a failing test) to produce a minimal, deterministic reproduction - preferably a failing automated test - that fails **for the reason in the report**. If it cannot be reproduced, stop and tell the user exactly what was tried and what information is missing.

@@ -173,7 +173,7 @@ def test_window_replays_a_run(tmp_path: Path) -> None:
     path = run_folder(tmp_path / "ws")
     (path / "events.jsonl").write_text("".join(json.dumps(e) + "\n" for e in DEMO), "utf-8")
     (path / "summary.json").write_text('{"status": "failed"}', "utf-8")
-    desk = Desk(root, Path(__file__).resolve().parents[2], tmp_path / "ws", tmp_path / "data")
+    desk = Desk(root, Path(__file__).resolve().parents[2], tmp_path / "ws", tmp_path / "data", tmp_path / "cc")
     try:
         desk.open(RunRef("proj", "20261029-120000"))
         assert desk.mode == "replay" and len(desk.player.events) == len(DEMO)
@@ -184,7 +184,7 @@ def test_window_replays_a_run(tmp_path: Path) -> None:
         root.update()
         assert desk.player.done and desk.brain.calls == 3
         assert desk.canvas.find_withtag("dyn"), "the neuron field drew nothing"
-        assert desk.runs.exists("proj/20261029-120000")
+        assert desk.runs.exists("swarm:proj/20261029-120000")
         desk.seek(3)
         assert desk.brain.count == 3 and desk.mode == "replay"
     finally:

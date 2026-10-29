@@ -13,18 +13,21 @@ from typing import Any
 
 # layer index -> neurons in that layer (left = input side of the pipeline, right = output side)
 LAYERS: list[list[str]] = [
-    ["researcher", "reverse-engineer"],
-    ["architect"],
-    ["developer"],
+    ["lead", "tech-lead", "researcher", "reverse-engineer", "Explore"],
+    ["architect", "Plan"],
+    ["developer", "general-purpose", "docs-writer"],
     ["gate"],
     ["tester", "debugger"],
     ["reviewer", "security-auditor"],
 ]
 CORE = {"researcher", "architect", "developer", "gate", "tester", "debugger", "reviewer", "security-auditor"}
-NAMES = {"gate": "tests / lint", "security-auditor": "security", "reverse-engineer": "rea"}
+NAMES = {"gate": "tests / lint", "security-auditor": "security", "reverse-engineer": "rea", "lead": "lead (you)",
+         "general-purpose": "general"}  # fmt: skip
+HUBS = {"lead", "tech-lead"}  # the main session of a Claude Code terminal: it delegates and gets results back
 PHASES = ("research", "reverse", "plan", "implement", "verify", "review", "fix")
 
 REST_ACTIVE = 0.45  # an agent that is working never decays below this
+REST_WAITING = 0.18  # a lead waiting on its subagents
 TAU_ACTIVE = 2.5  # seconds for a spike to fall back to the working level
 TAU_IDLE = 1.2
 HISTORY = 240  # potential samples kept per neuron (the inspector's oscilloscope)
@@ -35,7 +38,8 @@ MAX_FEED = 400
 class Neuron:
     name: str
     layer: int
-    state: str = "idle"  # idle | active | done | failed
+    state: str = "idle"  # idle | active | waiting | done | failed
+    running: int = 0  # calls in flight (parallel subagents of one type share a neuron)
     potential: float = 0.0
     fires: int = 0  # agent calls
     tools: int = 0
@@ -98,6 +102,7 @@ class Brain:
         self.gates: list[tuple[str, str]] = []
         self.phases: list[tuple[str, str]] = []
         self.last_active: str | None = None
+        self.last_ended: str | None = None
         self.first_t: float | None = None
         self.last_t: float | None = None
         self.count = 0  # events applied
@@ -122,8 +127,11 @@ class Brain:
         cols = [col for col in self.layers if col]
         return [(a, b) for left, right in zip(cols, cols[1:], strict=False) for a in left for b in right]
 
-    def _handoff(self, to: str, label: str) -> None:
-        src = self.last_active
+    def _hub(self) -> Neuron | None:
+        return next((n for n in self.neurons.values() if n.name in HUBS and n.fires), None)
+
+    def _handoff(self, to: str, label: str, src: str | None = None) -> None:
+        src = src or self.last_active
         self.last_active = to
         if not src or src == to:
             return
@@ -174,10 +182,19 @@ class Brain:
         elif kind == "agent_start" and role:
             n = self.neuron(role)
             label = str(ev.get("label") or "")
-            self._handoff(role, label)
-            for other in self.neurons.values():  # one agent works at a time; a new start ends any stale one
-                if other.state == "active" and other is not n:
-                    other.state = "done"
+            hub = self._hub()
+            if ev.get("exclusive", True):  # the pipeline runs one agent at a time: a new start ends any stale one
+                self._handoff(role, label)
+                for other in self.neurons.values():
+                    if other.state == "active" and other is not n:
+                        other.state = "done"
+            elif role in HUBS:  # a new prompt: the lead wakes, nothing is handed to it
+                self.last_active = role
+            else:  # a Claude Code subagent, maybe one of several in parallel: delegated by the lead
+                self._handoff(role, label, hub.name if hub else None)
+                if hub and hub.state == "active":
+                    hub.state = "waiting"
+            n.running += 1
             n.state, n.label, n.text = "active", label, ""
             n.model = str(ev.get("model") or "")
             n.fires += 1
@@ -186,32 +203,45 @@ class Brain:
             self._say(ev, f"{role} started: {label}", "start")
         elif kind == "activity" and role:
             n = self.neuron(role)
-            bad = bool(ev.get("blocked"))
+            bad = bool(ev.get("blocked") or ev.get("failed"))
             n.state = "active"
             n.text = str(ev.get("text") or ev.get("what") or "")
             if ev.get("what", "tool") == "tool":
                 n.tools += 1
-            n.blocked += bad
+            n.blocked += bool(ev.get("blocked"))
             n.spike(0.35)
             self.effects.append(Effect("spark", role, bad=bad))
             self._say(ev, f"{role} · {n.text}", "bad" if bad else "")
         elif kind == "agent_end" and role:
             n = self.neuron(role)
             ok = bool(ev.get("ok"))
-            n.state = "done" if ok else "failed"
+            n.running = max(0, n.running - 1)
+            n.state = ("active" if n.running else "done") if ok else "failed"
+            self.last_ended = role
             n.failures += not ok
             n.cost += float(ev.get("cost") or 0.0)
             n.turns += int(ev.get("turns") or 0)
             n.seconds += float(ev.get("seconds") or 0.0)
             n.blocked = max(n.blocked, int(ev.get("denied") or 0))
-            n.text = "" if ok else str(ev.get("error") or "failed")
+            n.text = str(ev.get("text") or "") if ok else str(ev.get("error") or "failed")
             stats = f"${float(ev.get('cost') or 0):.2f} · {ev.get('turns', 0)} turns"
             self._say(ev, f"{role} {'finished' if ok else 'FAILED'} · {stats}", "ok" if ok else "bad")
+        elif kind == "resume" and role:  # a subagent returned its result to the lead
+            n = self.neuron(role)
+            src = self.last_ended if self.last_ended and self.last_ended != role else None
+            if src:
+                self._handoff(role, "result", src)
+            busy = any(o.running and o.name not in HUBS for o in self.neurons.values())
+            if n.running:
+                n.state = "waiting" if busy else "active"
+                n.spike(0.5)
+            self._say(ev, f"{role} ← {src or 'subagent'}", "start")
         elif kind == "gate":
             n = self.neuron("gate")
             label, state = str(ev.get("label") or ""), str(ev.get("state") or "")
             passed = "pass" in state.lower()
-            self._handoff("gate", label)
+            runner = str(ev.get("role") or "")  # who ran the checks (sessions say; the pipeline's is the last agent)
+            self._handoff("gate", label, runner if runner in self.neurons else None)
             n.state = "done" if passed else "failed"
             n.fires += 1
             n.failures += not passed
@@ -225,9 +255,9 @@ class Brain:
         """Let potentials and synapse heat decay, and sample every neuron's trace."""
         dt = max(0.0, dt)
         for n in self.neurons.values():
-            if n.state == "active":
-                above = max(0.0, n.potential - REST_ACTIVE)
-                n.potential = REST_ACTIVE + above * math.exp(-dt / TAU_ACTIVE)
+            if n.state in ("active", "waiting"):
+                rest = REST_ACTIVE if n.state == "active" else REST_WAITING
+                n.potential = rest + (n.potential - rest) * math.exp(-dt / TAU_ACTIVE)
             else:
                 n.potential *= math.exp(-dt / TAU_IDLE)
             n.history.append(n.potential)
