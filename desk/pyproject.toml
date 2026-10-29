@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "swarm-desk"
+version = "0.1.0"
+description = "A native desktop neuron view of the swarm, with a harness to launch, follow and replay runs."
+requires-python = ">=3.11"
+dependencies = []          # standard library (tkinter) + swarm_ui from this checkout
+
+[project.scripts]
+swarm-desk = "swarm_desk.main:main"
+
+[tool.setuptools.packages.find]
+include = ["swarm_desk*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = [".", "../ui"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["swarm_desk", "swarm_ui"]

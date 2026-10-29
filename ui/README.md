@@ -33,7 +33,7 @@ default). Ctrl+C stops the panel and any job it started.
 - **Host and Origin checks** on every request (blocks DNS rebinding and cross-site requests); no CORS.
 - Strict **CSP** (`default-src 'none'`, scripts/styles from self only), `nosniff`, no-store, frame denial; the UI never
   uses `innerHTML`, so run output cannot inject markup.
-- Only four commands can be launched (`run|review|audit|research`), built as an argv list (**no shell**), user text after
+- Only five commands can be launched (`run|review|audit|research|demo`; demo forwards nothing from the request), built as an argv list (**no shell**), user text after
   `--`, budget capped at $10, model/rounds whitelisted, projects must already exist under `workspace/`.
 - Read access is limited to a whitelist of artifact names inside validated run folders (no path traversal).
 - The monitor is read-only. The browser names a queue run by its item number; the server looks the folder up in

@@ -21,11 +21,12 @@ from typing import Any
 
 from swarm_ui.runs import NAME_RE, list_projects
 
-KINDS = ("run", "review", "audit", "research")
+KINDS = ("run", "review", "audit", "research", "demo")
 MODELS = ("haiku", "sonnet", "opus")
 MAX_TEXT = 4000
 MAX_BUDGET = 10.0
 MAX_ROUNDS = 5
+DEMO_PACE = 0.6  # seconds per scripted tool call: slow enough to watch the team work
 LOG_CHUNK = 64 * 1024
 _ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 _JOB_ID = re.compile(r"^[0-9a-f]{12}$")
@@ -51,6 +52,8 @@ def build_argv(root: Path, spec: dict[str, Any], default_budget: float = 3.0) ->
     text = text.strip()
     if kind in ("run", "research") and not text:
         raise JobError("describe the task first")
+    if kind == "demo":  # scripted and offline: no text, budget, model or project to forward
+        return [swarm_python(root), "-m", "swarm", "demo", "--nice", "--pace", f"{DEMO_PACE:g}"]
 
     argv = [swarm_python(root), "-m", "swarm", kind, "--yes", "--nice"]
 

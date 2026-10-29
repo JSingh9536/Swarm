@@ -19,12 +19,16 @@ MARK = "swarm_mirror: true"
 HOME = "Swarm Home"
 
 
+def _on_windows() -> bool:
+    return os.name == "nt"
+
+
 def find_vault() -> Path | None:
     """SWARM_OBSIDIAN_VAULT, else the open (or most recently used) vault from Obsidian's own registry."""
     override = os.environ.get("SWARM_OBSIDIAN_VAULT")
     if override:
         return Path(override)
-    appdata = Path(os.environ.get("APPDATA", "")) if os.name == "nt" else Path.home() / ".config"
+    appdata = Path(os.environ.get("APPDATA", "")) if _on_windows() else Path.home() / ".config"
     base = appdata / "obsidian"
     try:
         vaults = json.loads((base / "obsidian.json").read_text(encoding="utf-8")).get("vaults", {})

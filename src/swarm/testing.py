@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import sys
 from collections.abc import Callable
@@ -42,11 +43,23 @@ class ScriptedBackend:
     A reply is either an AgentResult or a callable `(AgentRequest) -> AgentResult` (which may also
     touch the project directory, like a real developer would). When a role runs out of replies the
     call fails, unless `repeat_last` is set.
+
+    `activity` gives a role tool lines to report through `on_event` on every call (what a live dashboard shows),
+    `pace` the seconds to wait before each one, so a demo can be watched instead of finishing in an instant.
     """
 
-    def __init__(self, script: dict[str, list[Reply]] | None = None, *, repeat_last: bool = False) -> None:
+    def __init__(
+        self,
+        script: dict[str, list[Reply]] | None = None,
+        *,
+        repeat_last: bool = False,
+        activity: dict[str, list[str]] | None = None,
+        pace: float = 0.0,
+    ) -> None:
         self.script = {name: list(replies) for name, replies in (script or {}).items()}
         self.repeat_last = repeat_last
+        self.activity = activity or {}
+        self.pace = max(0.0, pace)
         self.requests: list[AgentRequest] = []
 
     def calls_for(self, role: str) -> list[AgentRequest]:
@@ -58,6 +71,11 @@ class ScriptedBackend:
         if not queue:
             return fail(f"no scripted reply left for role '{request.role.name}'")
         reply = queue[0] if self.repeat_last and len(queue) == 1 else queue.pop(0)
+        for line in self.activity.get(request.role.name, []):
+            if self.pace:
+                await asyncio.sleep(self.pace)
+            if on_event:
+                on_event("tool", line)
         result = reply(request) if callable(reply) else reply
         return dataclasses.replace(result)
 
@@ -102,7 +120,16 @@ def test_trims_edges():
 )
 
 
-def demo_backend(project_dir: Path) -> ScriptedBackend:
+_DEMO_ACTIVITY = {
+    "researcher": ["WebSearch python slugify standard library", "WebFetch https://docs.python.org/3/library/re.html"],
+    "architect": ["Glob **/*.py", "Read research.md"],
+    "developer": ["Write slugify.py", "Write test_slugify.py", "Bash python -m pytest -q"],
+    "tester": ["Read slugify.py", "Bash python -m pytest -q"],
+    "reviewer": ["Read slugify.py", "Grep strip", "Read test_slugify.py"],
+}
+
+
+def demo_backend(project_dir: Path, pace: float = 0.0) -> ScriptedBackend:
     """A scripted 'team' that builds a tiny slugify module, gets one review round, and fixes it."""
     tests_cmd = f'"{sys.executable}" -m pytest -q'
 
@@ -186,5 +213,7 @@ def demo_backend(project_dir: Path) -> ScriptedBackend:
             "developer": [developer, developer_fix],
             "tester": [ok(qa, cost=0.0)],
             "reviewer": [ok(first_review, cost=0.0), ok(second_review, cost=0.0)],
-        }
+        },
+        activity=_DEMO_ACTIVITY,
+        pace=pace,
     )

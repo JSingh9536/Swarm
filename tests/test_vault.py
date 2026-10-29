@@ -75,5 +75,5 @@ def test_find_vault_prefers_env_then_the_open_vault(tmp_path: Path, monkeypatch:
     config.mkdir(parents=True)
     (config / "obsidian.json").write_text(json.dumps(registry), encoding="utf-8")
     monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
-    monkeypatch.setattr(vault.os, "name", "nt")
+    monkeypatch.setattr(vault, "_on_windows", lambda: True)  # not os.name: that would turn every Path into WindowsPath
     assert vault.find_vault() == current

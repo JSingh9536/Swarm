@@ -50,7 +50,8 @@ def test_edit(tmp_path: Path) -> None:
 
 def test_write_outside_project_is_blocked(tmp_path: Path) -> None:
     ex = executor(tmp_path)
-    out = ex.run("write_file", {"path": "C:/Windows/evil.txt", "content": "x"})
+    outside = Path(tmp_path.anchor) / "swarm-guard-test" / "evil.txt"  # not project, not temp, any OS
+    out = ex.run("write_file", {"path": str(outside), "content": "x"})
     assert "blocked by guard" in out and ex.denied == 1
 
 
@@ -347,9 +348,11 @@ def test_calls_from_text_ignores_prose_unknown_tools_and_bad_shapes() -> None:
 
 def test_text_tool_call_is_executed_through_the_guard(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A call written as text must run through the same executor and policy as a structured one."""
+    outside = Path(tmp_path.anchor) / "swarm-guard-test" / "swarm_escape.py"  # not project, not temp, any OS
+    escape = json.dumps({"name": "write_file", "arguments": {"path": str(outside), "content": "x"}})
     replies = iter([
         {"content": '{"name": "write_file", "arguments": {"path": "hello.py", "content": "x = 1\n"}}'},
-        {"content": '{"name": "write_file", "arguments": {"path": "C:/Windows/swarm_escape.py", "content": "x"}}'},
+        {"content": escape},
         {"content": "Done."},
     ])
     backend = LocalBackend("m")

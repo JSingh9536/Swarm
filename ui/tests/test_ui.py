@@ -55,6 +55,11 @@ def test_build_argv_accepts_good_requests(root):
     assert "--fix" in argv and str(root / "workspace" / "proj") in argv
 
 
+def test_build_argv_demo_forwards_nothing_from_the_request(root):
+    argv = build_argv(root, {"kind": "demo", "text": "--project /etc", "budget": 99, "project": "../x"})
+    assert argv[1:] == ["-m", "swarm", "demo", "--nice", "--pace", "0.6"]
+
+
 @pytest.mark.parametrize(
     "spec",
     [
